@@ -1,0 +1,1069 @@
+<!DOCTYPE html>
+<html lang="es" data-theme="light">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>SKF · Normalizador de Referencias</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --blue:       #0040A0;
+      --blue-dark:  #001F50;
+      --blue-mid:   #3264C8;
+      --blue-light: #EBF1FF;
+      --green:      #27AE60;
+      --green-bg:   #EAFAF1;
+      --red:        #E74C3C;
+      --red-bg:     #FDEDEC;
+      --orange:     #E67E22;
+      --orange-bg:  #FEF9E7;
+      --purple:     #8E44AD;
+      --purple-bg:  #F5EEF8;
+      --purple-mid: #A569BD;
+      --gray:       #6C757D;
+      --gray-light: #F4F6FA;
+      --border:     #D8DFF0;
+      --text:       #1A1A2E;
+      --text-muted: #5A6070;
+      --card-bg:    #ffffff;
+      --body-bg:    #F4F6FA;
+      --radius:     10px;
+      --shadow:     0 2px 12px rgba(0,0,0,.08);
+    }
+
+    [data-theme="dark"] {
+      --blue:       #5B8FE8;
+      --blue-dark:  #1A3A7A;
+      --blue-mid:   #6CA0F0;
+      --blue-light: #1A2540;
+      --green:      #2ECC71;
+      --green-bg:   #0D2A1A;
+      --red:        #E74C3C;
+      --red-bg:     #2A0E0E;
+      --orange:     #F39C12;
+      --orange-bg:  #2A1A00;
+      --purple:     #BB86FC;
+      --purple-bg:  #1E1030;
+      --purple-mid: #CF9FFF;
+      --gray:       #9CA3AF;
+      --gray-light: #1E2130;
+      --border:     #2E3650;
+      --text:       #E8EDF8;
+      --text-muted: #8B96B0;
+      --card-bg:    #161D30;
+      --body-bg:    #0F1320;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--body-bg);
+      color: var(--text);
+      min-height: 100vh;
+      transition: background .25s, color .25s;
+    }
+
+    /* ── Header ── */
+    header {
+      background: linear-gradient(135deg, var(--blue-dark) 0%, var(--blue) 100%);
+      color: #fff;
+      padding: 1.25rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1.25rem;
+      box-shadow: 0 3px 14px rgba(0,0,0,.35);
+    }
+    .logo-badge {
+      background: #fff;
+      color: var(--blue);
+      font-weight: 900;
+      font-size: 1.1rem;
+      letter-spacing: .05em;
+      padding: .3rem .7rem;
+      border-radius: 6px;
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+    header p  { font-size: .8rem; opacity: .75; margin-top: .1rem; }
+    .header-right { margin-left: auto; display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; }
+    .status-pills { display: flex; gap: .5rem; flex-wrap: wrap; }
+    .pill {
+      font-size: .7rem; padding: .2rem .55rem; border-radius: 99px; font-weight: 600;
+      background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25);
+    }
+    .pill.ok   { background: rgba(39,174,96,.3);  border-color: rgba(39,174,96,.5); }
+    .pill.warn { background: rgba(230,126,34,.3); border-color: rgba(230,126,34,.5); }
+    .pill.err  { background: rgba(231,76,60,.3);  border-color: rgba(231,76,60,.5); }
+
+    /* Dark mode toggle */
+    .theme-btn {
+      background: rgba(255,255,255,.15); border: 1px solid rgba(255,255,255,.25);
+      color: #fff; border-radius: 99px; padding: .25rem .65rem;
+      cursor: pointer; font-size: .75rem; font-weight: 600; transition: background .18s;
+      display: flex; align-items: center; gap: .35rem;
+    }
+    .theme-btn:hover { background: rgba(255,255,255,.25); }
+
+    /* ── Layout ── */
+    main { max-width: 920px; margin: 2rem auto; padding: 0 1.25rem 3rem; }
+
+    /* ── Tabs ── */
+    .tabs { display: flex; gap: .5rem; margin-bottom: 1.5rem; }
+    .tab-btn {
+      flex: 1; padding: .75rem 1rem; border: 2px solid var(--border);
+      border-radius: var(--radius); background: var(--card-bg); color: var(--text-muted);
+      font-size: .95rem; font-weight: 600; cursor: pointer; transition: all .18s;
+      display: flex; align-items: center; justify-content: center; gap: .5rem;
+    }
+    .tab-btn:hover { border-color: var(--blue-mid); color: var(--blue); }
+    .tab-btn.active {
+      background: var(--blue); border-color: var(--blue); color: #fff;
+      box-shadow: 0 4px 12px rgba(0,64,160,.3);
+    }
+
+    /* ── Card ── */
+    .card { background: var(--card-bg); border-radius: var(--radius); box-shadow: var(--shadow); padding: 1.75rem; }
+    .card h2 { font-size: 1.05rem; font-weight: 700; color: var(--blue); margin-bottom: .35rem; }
+    .card .subtitle { font-size: .85rem; color: var(--text-muted); margin-bottom: 1.5rem; }
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* ── Form ── */
+    label {
+      display: block; font-size: .82rem; font-weight: 600; color: var(--text-muted);
+      margin-bottom: .35rem; text-transform: uppercase; letter-spacing: .04em;
+    }
+    textarea {
+      width: 100%; padding: .85rem 1rem; border: 2px solid var(--border);
+      border-radius: var(--radius); font-size: .95rem;
+      font-family: 'SF Mono', 'Fira Code', monospace; resize: vertical;
+      transition: border-color .18s; line-height: 1.5; color: var(--text);
+      background: var(--card-bg);
+    }
+    textarea:focus { outline: none; border-color: var(--blue); }
+    textarea::placeholder { color: var(--text-muted); font-family: inherit; }
+    select {
+      width: 100%; padding: .7rem 1rem; border: 2px solid var(--border);
+      border-radius: var(--radius); font-size: .9rem; background: var(--card-bg);
+      color: var(--text); cursor: pointer; transition: border-color .18s;
+    }
+    select:focus { outline: none; border-color: var(--blue); }
+
+    /* ── Buttons ── */
+    .btn {
+      display: inline-flex; align-items: center; gap: .5rem;
+      padding: .75rem 1.5rem; border-radius: var(--radius); border: none;
+      font-size: .95rem; font-weight: 700; cursor: pointer; transition: all .18s;
+    }
+    .btn-primary { background: var(--blue); color: #fff; box-shadow: 0 3px 10px rgba(0,64,160,.25); }
+    .btn-primary:hover:not(:disabled) { background: var(--blue-mid); transform: translateY(-1px); box-shadow: 0 5px 16px rgba(0,64,160,.4); }
+    .btn-primary:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+    .btn-success { background: var(--green); color: #fff; box-shadow: 0 3px 10px rgba(39,174,96,.25); }
+    .btn-success:hover:not(:disabled) { background: #219150; transform: translateY(-1px); }
+    .btn-success:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-pro {
+      background: linear-gradient(135deg, var(--purple) 0%, #6C3483 100%);
+      color: #fff; box-shadow: 0 3px 10px rgba(142,68,173,.35);
+    }
+    .btn-pro:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 5px 16px rgba(142,68,173,.5); }
+    .btn-pro:disabled { opacity: .5; cursor: not-allowed; transform: none; }
+    .btn-outline { background: transparent; color: var(--blue); border: 2px solid var(--blue); }
+    .btn-outline:hover { background: var(--blue-light); }
+    .btn-outline-sm {
+      background: transparent; color: var(--text-muted); border: 1.5px solid var(--border);
+      padding: .4rem .9rem; font-size: .82rem; border-radius: 8px;
+    }
+    .btn-outline-sm:hover { border-color: var(--blue); color: var(--blue); }
+    .btn-icon {
+      background: transparent; border: 1.5px solid var(--border); border-radius: 8px;
+      color: var(--text-muted); padding: .4rem .7rem; font-size: .85rem; cursor: pointer;
+      transition: all .18s; display: inline-flex; align-items: center; gap: .3rem;
+    }
+    .btn-icon:hover { border-color: var(--blue); color: var(--blue); background: var(--blue-light); }
+    .btn-icon.copied { border-color: var(--green); color: var(--green); background: var(--green-bg); }
+
+    /* ── Drop zone ── */
+    .drop-zone {
+      border: 2.5px dashed var(--border); border-radius: var(--radius); padding: 2.5rem 1rem;
+      text-align: center; cursor: pointer; transition: all .2s; background: var(--gray-light);
+    }
+    .drop-zone:hover, .drop-zone.drag-over { border-color: var(--blue); background: var(--blue-light); }
+    .drop-zone .drop-icon { font-size: 2.5rem; margin-bottom: .5rem; }
+    .drop-zone .drop-title { font-weight: 700; font-size: 1rem; color: var(--text); }
+    .drop-zone .drop-sub { font-size: .82rem; color: var(--text-muted); margin-top: .25rem; }
+    .drop-zone.has-file { border-style: solid; border-color: var(--green); background: var(--green-bg); }
+
+    .col-selector { margin-top: 1rem; display: none; }
+    .file-meta {
+      display: flex; align-items: center; gap: .75rem; padding: .75rem 1rem;
+      background: var(--green-bg); border: 1.5px solid var(--green); border-radius: var(--radius);
+      font-size: .88rem; color: var(--green); font-weight: 600;
+    }
+
+    /* ── File preview table ── */
+    .preview-table-wrap {
+      margin-top: .85rem; border-radius: 8px; overflow: hidden;
+      border: 1.5px solid var(--border); display: none;
+    }
+    .preview-label { font-size: .72rem; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: .05em; padding: .4rem .75rem;
+      background: var(--gray-light); border-bottom: 1px solid var(--border); }
+    .preview-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
+    .preview-table td { padding: .35rem .75rem; border-bottom: 1px solid var(--border); color: var(--text); }
+    .preview-table tr:last-child td { border-bottom: none; }
+    .preview-table tr:nth-child(even) td { background: var(--gray-light); }
+
+    /* ── Single result ── */
+    .result-box { margin-top: 1.5rem; border-radius: var(--radius); overflow: hidden; border: 2px solid var(--border); display: none; }
+    .result-box.found     { border-color: var(--green); }
+    .result-box.review    { border-color: var(--orange); }
+    .result-box.not_found { border-color: var(--red); }
+    .result-header { padding: .75rem 1.25rem; display: flex; align-items: center; gap: .75rem; }
+    .result-box.found     .result-header { background: var(--green-bg); }
+    .result-box.review    .result-header { background: var(--orange-bg); }
+    .result-box.not_found .result-header { background: var(--red-bg); }
+    .status-badge { font-size: .72rem; font-weight: 800; padding: .2rem .6rem; border-radius: 99px; text-transform: uppercase; letter-spacing: .06em; }
+    .result-box.found     .status-badge { background: var(--green); color: #fff; }
+    .result-box.review    .status-badge { background: var(--orange); color: #fff; }
+    .result-box.not_found .status-badge { background: var(--red); color: #fff; }
+    .status-label { font-weight: 700; font-size: .95rem; }
+    .result-ref-row { display: flex; align-items: center; gap: .75rem; padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); }
+    .result-ref { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 1.6rem; font-weight: 900; color: var(--blue); letter-spacing: .04em; flex: 1; }
+    .result-ref .ref-empty { color: var(--red); font-size: 1.1rem; font-weight: 600; font-family: inherit; }
+    .result-meta { padding: .75rem 1.25rem; display: flex; gap: 1.5rem; flex-wrap: wrap; font-size: .83rem; color: var(--text-muted); }
+    .meta-item { display: flex; align-items: center; gap: .35rem; }
+    .meta-label { font-weight: 600; text-transform: uppercase; font-size: .72rem; letter-spacing: .04em; }
+    .conf-HIGH   { color: var(--green);  font-weight: 700; }
+    .conf-MEDIUM { color: var(--orange); font-weight: 700; }
+    .conf-LOW    { color: var(--red);    font-weight: 700; }
+
+    /* ── Search history ── */
+    .history-section { margin-top: 1.5rem; display: none; }
+    .history-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: .6rem; }
+    .history-title { font-size: .75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
+    .history-list { display: flex; flex-direction: column; gap: .35rem; }
+    .history-item {
+      display: flex; align-items: center; gap: .75rem; padding: .5rem .85rem;
+      background: var(--gray-light); border: 1.5px solid var(--border);
+      border-radius: 8px; cursor: pointer; transition: all .15s; font-size: .85rem;
+    }
+    .history-item:hover { border-color: var(--blue); background: var(--blue-light); }
+    .history-desc { flex: 1; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .history-ref { font-family: 'SF Mono', monospace; font-weight: 700; color: var(--blue); font-size: .8rem; }
+    .history-badge { font-size: .65rem; font-weight: 800; padding: .15rem .45rem; border-radius: 99px; flex-shrink: 0; }
+    .hb-found     { background: var(--green); color: #fff; }
+    .hb-review    { background: var(--orange); color: #fff; }
+    .hb-not_found { background: var(--red); color: #fff; }
+
+    /* ── Donut chart ── */
+    .chart-section { display: none; margin-top: 1.5rem; }
+    .chart-row { display: flex; align-items: center; gap: 2rem; flex-wrap: wrap; }
+    .donut-wrap { flex-shrink: 0; }
+    .donut-legend { flex: 1; min-width: 180px; }
+    .legend-item {
+      display: flex; align-items: center; gap: .75rem; padding: .6rem .85rem;
+      border-radius: 8px; margin-bottom: .5rem; font-size: .9rem;
+    }
+    .legend-item.found     { background: var(--green-bg); }
+    .legend-item.review    { background: var(--orange-bg); }
+    .legend-item.not_found { background: var(--red-bg); }
+    .legend-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
+    .legend-item.found     .legend-dot { background: var(--green); }
+    .legend-item.review    .legend-dot { background: var(--orange); }
+    .legend-item.not_found .legend-dot { background: var(--red); }
+    .legend-num { font-size: 1.3rem; font-weight: 900; margin-left: auto; }
+    .legend-item.found     .legend-num { color: var(--green); }
+    .legend-item.review    .legend-num { color: var(--orange); }
+    .legend-item.not_found .legend-num { color: var(--red); }
+    .legend-label { font-weight: 600; color: var(--text); }
+    .legend-sub { font-size: .75rem; color: var(--text-muted); }
+
+    /* ── Download section ── */
+    .download-section { display: none; margin-top: 1.25rem; }
+    .download-label { font-size: .75rem; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: .05em; margin-bottom: .6rem; }
+    .download-row { display: flex; gap: .5rem; flex-wrap: wrap; align-items: center; }
+    .download-filter { display: flex; align-items: center; gap: .4rem; font-size: .82rem; color: var(--text-muted); }
+    .download-filter select { width: auto; padding: .35rem .65rem; font-size: .82rem; }
+
+    /* ── PRO upgrade card ── */
+    .pro-card {
+      display: none; margin-top: 1.25rem; border-radius: var(--radius); overflow: hidden;
+      border: 2px solid var(--purple); background: var(--purple-bg);
+    }
+    .pro-card-header {
+      background: linear-gradient(135deg, var(--purple) 0%, #6C3483 100%);
+      color: #fff; padding: .85rem 1.25rem; display: flex; align-items: center; gap: .75rem;
+    }
+    .pro-badge {
+      background: rgba(255,255,255,.25); color: #fff; font-size: .7rem; font-weight: 800;
+      padding: .15rem .5rem; border-radius: 99px; letter-spacing: .06em;
+    }
+    .pro-card-body { padding: 1.1rem 1.25rem; }
+    .pro-card-body p { font-size: .9rem; color: var(--text); margin-bottom: .85rem; line-height: 1.5; }
+
+    /* Free resolution highlight */
+    .free-resolution-bar {
+      display: flex; align-items: center; gap: .75rem; padding: .65rem 1rem;
+      background: var(--green-bg); border: 1.5px solid var(--green);
+      border-radius: 8px; margin-bottom: .75rem;
+    }
+    .free-pct { font-size: 1.4rem; font-weight: 900; color: var(--green); }
+    .free-label { font-size: .82rem; color: var(--text-muted); line-height: 1.4; }
+
+    .cost-estimate {
+      display: flex; align-items: center; gap: 1rem; padding: .75rem 1rem;
+      background: var(--card-bg); border-radius: 8px; border: 1.5px solid var(--purple);
+      margin-bottom: 1rem; flex-wrap: wrap;
+    }
+    .cost-main { font-size: 1.4rem; font-weight: 900; color: var(--purple); }
+    .cost-sub { font-size: .8rem; color: var(--text-muted); }
+    .cost-items { margin-left: auto; font-size: .82rem; color: var(--text-muted); font-weight: 600; }
+    .cost-cached { font-size: .75rem; color: var(--green); font-weight: 600; }
+
+    /* ── PRO results ── */
+    .pro-results { display: none; margin-top: 1.25rem; }
+    .improvement-badge {
+      display: inline-flex; align-items: center; gap: .4rem;
+      background: var(--purple-bg); border: 1.5px solid var(--purple);
+      color: var(--purple); font-size: .82rem; font-weight: 700;
+      padding: .35rem .85rem; border-radius: 99px; margin-bottom: .5rem;
+    }
+    .real-cost-badge {
+      display: inline-flex; align-items: center; gap: .4rem;
+      background: var(--green-bg); border: 1.5px solid var(--green);
+      color: var(--green); font-size: .82rem; font-weight: 700;
+      padding: .35rem .85rem; border-radius: 99px; margin-bottom: 1rem;
+    }
+
+    /* ── Modal ── */
+    .modal-overlay {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55);
+      z-index: 1000; align-items: center; justify-content: center; padding: 1rem;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--card-bg); border-radius: 14px; max-width: 480px; width: 100%;
+      box-shadow: 0 20px 60px rgba(0,0,0,.3); overflow: hidden;
+    }
+    .modal-header {
+      background: linear-gradient(135deg, var(--purple) 0%, #6C3483 100%);
+      color: #fff; padding: 1.25rem 1.5rem; display: flex; align-items: center; gap: .75rem;
+    }
+    .modal-header h3 { font-size: 1.1rem; font-weight: 700; }
+    .modal-body { padding: 1.5rem; }
+    .modal-body p { font-size: .9rem; color: var(--text); line-height: 1.6; margin-bottom: 1rem; }
+    .modal-cost-box {
+      background: var(--purple-bg); border: 2px solid var(--purple); border-radius: 10px;
+      padding: 1rem 1.25rem; margin: 1rem 0; text-align: center;
+    }
+    .modal-cost-box .big { font-size: 1.8rem; font-weight: 900; color: var(--purple); }
+    .modal-cost-box .small { font-size: .8rem; color: var(--text-muted); margin-top: .2rem; }
+    .modal-footer { padding: 0 1.5rem 1.5rem; display: flex; gap: .75rem; }
+    .modal-footer .btn { flex: 1; justify-content: center; }
+
+    /* ── Progress ── */
+    .progress-wrap { display: none; margin: 1rem 0; }
+    .progress-label { font-size: .82rem; color: var(--text-muted); margin-bottom: .4rem; font-weight: 600; display: flex; justify-content: space-between; }
+    .progress-bar-outer { width: 100%; height: 10px; background: var(--border); border-radius: 99px; overflow: hidden; }
+    .progress-bar-inner {
+      height: 100%; background: linear-gradient(90deg, var(--blue) 0%, var(--blue-mid) 100%);
+      border-radius: 99px; width: 0%; transition: width .5s ease;
+    }
+    .progress-bar-inner.indeterminate { animation: progress-slide 1.8s ease-in-out infinite; width: 40%; }
+    .progress-bar-inner.pro { background: linear-gradient(90deg, var(--purple) 0%, var(--purple-mid) 100%); }
+    @keyframes progress-slide { 0% { margin-left: -40%; } 100% { margin-left: 100%; } }
+
+    /* ── Error ── */
+    .error-box {
+      display: none; padding: .85rem 1.1rem; background: var(--red-bg);
+      border: 1.5px solid var(--red); border-radius: var(--radius);
+      color: var(--red); font-size: .88rem; font-weight: 600; margin-top: 1rem;
+    }
+
+    /* ── Spinner ── */
+    .spinner { width: 18px; height: 18px; border: 3px solid rgba(255,255,255,.4); border-top-color: #fff; border-radius: 50%; animation: spin .7s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .actions { display: flex; gap: .75rem; margin-top: 1.25rem; flex-wrap: wrap; }
+    .divider { border-top: 1px solid var(--border); margin: 1.25rem 0; }
+    .section-label { font-size: .75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .06em; margin-bottom: .85rem; }
+    footer { text-align: center; font-size: .78rem; color: var(--text-muted); padding-bottom: 2rem; }
+    @media (max-width: 600px) { header { flex-wrap: wrap; } .header-right { margin-left: 0; } .chart-row { flex-direction: column; } }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo-badge">SKF</div>
+  <div>
+    <h1>Normalizador de Referencias</h1>
+    <p>Rodamientos · Retenes · V-Rings · Correas</p>
+  </div>
+  <div class="header-right">
+    <div class="status-pills" id="statusPills">
+      <span class="pill" id="pillCache">Cargando…</span>
+      <span class="pill" id="pillClaude">Cargando…</span>
+    </div>
+    <button class="theme-btn" onclick="toggleTheme()" id="themeBtn">🌙 Oscuro</button>
+  </div>
+</header>
+
+<main>
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('single')" id="tabSingle">
+      🔍 Consulta Individual
+    </button>
+    <button class="tab-btn" onclick="switchTab('batch')" id="tabBatch">
+      📊 Análisis Masivo
+    </button>
+  </div>
+
+  <!-- ── Panel: Consulta Individual ── -->
+  <div class="panel active" id="panelSingle">
+    <div class="card">
+      <h2>Consulta Individual</h2>
+      <p class="subtitle">Pega la descripción del cliente para obtener la referencia SKF normalizada al instante.</p>
+
+      <label for="singleInput">Descripción del producto</label>
+      <textarea id="singleInput" rows="3"
+        placeholder="Ej: RODAMIENTO 22 207 CC/W33 C3  |  RETEN 80-100-10 VITON  |  BEARING 6205 2RS C3"></textarea>
+
+      <div id="singleError" class="error-box"></div>
+
+      <div class="actions">
+        <button class="btn btn-primary" id="singleBtn" onclick="normalizeSingle()">
+          <span id="singleBtnIcon">✦</span>
+          <span id="singleBtnText">Normalizar</span>
+        </button>
+        <button class="btn btn-outline" onclick="clearSingle()">Limpiar</button>
+      </div>
+
+      <div class="result-box" id="singleResult">
+        <div class="result-header">
+          <span class="status-badge" id="resStatusBadge"></span>
+          <span class="status-label" id="resStatusLabel"></span>
+        </div>
+        <div class="result-ref-row">
+          <div class="result-ref" id="resRef"></div>
+          <button class="btn-icon" id="copyBtn" onclick="copyRef()" title="Copiar referencia">
+            📋 Copiar
+          </button>
+        </div>
+        <div class="result-meta">
+          <div class="meta-item">
+            <span class="meta-label">Confianza</span>
+            <span id="resConf"></span>
+          </div>
+          <div class="meta-item">
+            <span class="meta-label">Fuente</span>
+            <span id="resSource"></span>
+          </div>
+          <div class="meta-item" id="resNotesWrap">
+            <span class="meta-label">Notas</span>
+            <span id="resNotes"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Search history -->
+      <div class="history-section" id="historySection">
+        <div class="history-header">
+          <span class="history-title">Historial de búsquedas</span>
+          <button class="btn-outline-sm" onclick="clearHistory()">Borrar</button>
+        </div>
+        <div class="history-list" id="historyList"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Panel: Análisis Masivo ── -->
+  <div class="panel" id="panelBatch">
+    <div class="card">
+      <h2>Análisis Masivo</h2>
+      <p class="subtitle">Sube un Excel o CSV. Primero obtendrás los resultados gratuitos del modelo local. Después podrás mejorarlos con la Versión PRO (Claude IA).</p>
+
+      <!-- Drag & drop -->
+      <div class="drop-zone" id="dropZone"
+        onclick="document.getElementById('fileInput').click()"
+        ondragover="dragOver(event)" ondragleave="dragLeave(event)" ondrop="dropFile(event)">
+        <div class="drop-icon" id="dropIcon">📂</div>
+        <div class="drop-title" id="dropTitle">Arrastra el archivo aquí o haz clic para seleccionarlo</div>
+        <div class="drop-sub" id="dropSub">Excel (.xlsx, .xls) o CSV (.csv)</div>
+      </div>
+      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none" onchange="fileSelected(event)" />
+
+      <div class="col-selector" id="colSelector">
+        <div class="file-meta" id="fileMeta"></div>
+        <div style="margin-top:1rem;">
+          <label for="colSelect">Columna de descripciones</label>
+          <select id="colSelect" onchange="updatePreview()"></select>
+        </div>
+        <!-- File preview -->
+        <div class="preview-table-wrap" id="previewWrap">
+          <div class="preview-label">Vista previa — primeras filas</div>
+          <table class="preview-table" id="previewTable"></table>
+        </div>
+      </div>
+
+      <div id="batchError" class="error-box"></div>
+
+      <!-- Progress básico -->
+      <div class="progress-wrap" id="progressWrap">
+        <div class="progress-label">
+          <span>Analizando con modelo local…</span>
+          <span id="progressPct"></span>
+        </div>
+        <div class="progress-bar-outer">
+          <div class="progress-bar-inner indeterminate" id="progressBar"></div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-primary" id="batchBtn" onclick="normalizeBatch()" disabled>
+          <span id="batchBtnIcon">⚡</span>
+          <span id="batchBtnText">Analizar gratis</span>
+        </button>
+        <button class="btn btn-outline" onclick="clearBatch()">Limpiar</button>
+      </div>
+
+      <!-- Resultado básico: donut + leyenda -->
+      <div class="chart-section" id="chartSection">
+        <div class="divider"></div>
+        <div class="section-label">Resultados — Versión Básica (gratuita)</div>
+        <div class="chart-row">
+          <div class="donut-wrap">
+            <svg id="donutBasic" viewBox="0 0 120 120" width="140" height="140"></svg>
+          </div>
+          <div class="donut-legend" id="legendBasic"></div>
+        </div>
+      </div>
+
+      <!-- Descargas versión básica -->
+      <div class="download-section" id="downloadBasic">
+        <div class="download-label">Descargar resultados básicos</div>
+        <div class="download-row">
+          <select class="download-filter" id="filterBasic" style="width:auto;padding:.4rem .65rem;font-size:.82rem;">
+            <option value="all">Todos</option>
+            <option value="FOUND">Solo encontradas</option>
+            <option value="REVIEW">Solo revisar</option>
+            <option value="NOT_FOUND">Solo no identificadas</option>
+          </select>
+          <button class="btn btn-success" onclick="downloadResult('basic','xlsx')">⬇ Excel</button>
+          <button class="btn btn-outline-sm" onclick="downloadResult('basic','csv')">⬇ CSV</button>
+        </div>
+      </div>
+
+      <!-- Tarjeta PRO -->
+      <div class="pro-card" id="proCard">
+        <div class="pro-card-header">
+          <span style="font-size:1.2rem;">🤖</span>
+          <span style="font-weight:700;font-size:1rem;">Versión PRO — Mejorar con Claude IA</span>
+          <span class="pro-badge">PRO</span>
+        </div>
+        <div class="pro-card-body">
+          <!-- Free resolution bar -->
+          <div class="free-resolution-bar" id="freeResBar" style="display:none;">
+            <div class="free-pct" id="freePct">—</div>
+            <div class="free-label">
+              <strong>resuelto gratis</strong> con el modelo local<br>
+              <span id="freeDetail" style="font-size:.75rem;"></span>
+            </div>
+          </div>
+
+          <p id="proCardDesc">Algunas referencias no se han podido identificar con el modelo local.</p>
+
+          <div class="cost-estimate" id="costEstimate">
+            <div>
+              <div class="cost-main" id="costMain">—</div>
+              <div class="cost-sub" id="costSub">Coste estimado</div>
+              <div class="cost-cached" id="costCached" style="display:none;"></div>
+            </div>
+            <div class="cost-items" id="costItems">— referencias</div>
+          </div>
+          <button class="btn btn-pro" style="width:100%;" id="proBtn" onclick="showProModal()">
+            🚀 Activar Versión PRO
+          </button>
+        </div>
+      </div>
+
+      <!-- Progress PRO -->
+      <div class="progress-wrap" id="progressPro" style="margin-top:1rem;">
+        <div class="progress-label">
+          <span>Procesando con Claude IA…</span>
+          <span id="progressProPct"></span>
+        </div>
+        <div class="progress-bar-outer">
+          <div class="progress-bar-inner pro" id="progressProBar" style="width:0%"></div>
+        </div>
+      </div>
+
+      <!-- Resultado PRO -->
+      <div class="pro-results" id="proResults">
+        <div class="divider"></div>
+        <div class="section-label" style="color:var(--purple);">Resultados — Versión PRO 🤖</div>
+        <div class="improvement-badge" id="improvementBadge"></div>
+        <div class="real-cost-badge" id="realCostBadge" style="display:none;"></div>
+        <div class="chart-row">
+          <div class="donut-wrap">
+            <svg id="donutPro" viewBox="0 0 120 120" width="140" height="140"></svg>
+          </div>
+          <div class="donut-legend" id="legendPro"></div>
+        </div>
+        <div style="margin-top:1rem;">
+          <div class="download-label">Descargar resultados PRO</div>
+          <div class="download-row">
+            <select id="filterPro" style="width:auto;padding:.4rem .65rem;font-size:.82rem;border:1.5px solid var(--border);border-radius:8px;background:var(--card-bg);color:var(--text);">
+              <option value="all">Todos</option>
+              <option value="FOUND">Solo encontradas</option>
+              <option value="REVIEW">Solo revisar</option>
+              <option value="NOT_FOUND">Solo no identificadas</option>
+            </select>
+            <button class="btn btn-pro" onclick="downloadResult('pro','xlsx')">⬇ Excel PRO</button>
+            <button class="btn btn-outline-sm" onclick="downloadResult('pro','csv')">⬇ CSV</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</main>
+
+<footer>SKF Normalizador de Referencias · Herramienta interna</footer>
+
+<!-- ── Modal confirmación PRO ── -->
+<div class="modal-overlay" id="proModal">
+  <div class="modal">
+    <div class="modal-header">
+      <span style="font-size:1.3rem;">🤖</span>
+      <h3>Activar Versión PRO</h3>
+    </div>
+    <div class="modal-body">
+      <p>La Versión PRO enviará las referencias no identificadas a <strong>Claude IA</strong> para su normalización con conocimiento experto en denominaciones SKF.</p>
+      <div class="modal-cost-box">
+        <div class="big" id="modalCostMain">—</div>
+        <div class="small" id="modalCostSub">—</div>
+      </div>
+      <p style="font-size:.82rem;color:var(--text-muted);">El coste es aproximado y puede variar ±35% según la longitud de las descripciones. Se factura directamente por Anthropic a tu cuenta.</p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-outline" onclick="closeProModal()">Cancelar</button>
+      <button class="btn btn-pro" onclick="runPro()">✓ Confirmar y procesar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  let _currentFile = null;
+  let _batchToken = null;
+  let _claudeAvailable = false;
+  let _estimateData = null;
+  let _proPollingInterval = null;
+  let _previewRowsData = {};  // col -> rows[]
+
+  // ── Theme ────────────────────────────────────────────────────────────────
+  function initTheme() {
+    const saved = localStorage.getItem('skf-theme') || 'light';
+    setTheme(saved);
+  }
+  function toggleTheme() {
+    const current = document.documentElement.getAttribute('data-theme');
+    setTheme(current === 'dark' ? 'light' : 'dark');
+  }
+  function setTheme(t) {
+    document.documentElement.setAttribute('data-theme', t);
+    localStorage.setItem('skf-theme', t);
+    document.getElementById('themeBtn').textContent = t === 'dark' ? '☀️ Claro' : '🌙 Oscuro';
+  }
+
+  // ── Status ──────────────────────────────────────────────────────────────
+  async function checkStatus() {
+    try {
+      const d = await apiFetch('/api/status');
+      const pillCache  = document.getElementById('pillCache');
+      const pillClaude = document.getElementById('pillClaude');
+      pillCache.textContent = d.cache_loaded ? `Modelo: ${d.cache_entries.toLocaleString()} refs` : 'Modelo: no cargado';
+      pillCache.className   = 'pill ' + (d.cache_loaded ? 'ok' : 'err');
+      _claudeAvailable = d.claude_available;
+      pillClaude.textContent = d.claude_available ? 'Claude: activo' : 'Claude: sin API key';
+      pillClaude.className   = 'pill ' + (d.claude_available ? 'ok' : 'warn');
+    } catch { document.getElementById('pillCache').className = 'pill err'; }
+  }
+
+  // ── Tabs ──────────────────────────────────────────────────────────────
+  function switchTab(tab) {
+    document.getElementById('panelSingle').classList.toggle('active', tab === 'single');
+    document.getElementById('panelBatch').classList.toggle('active', tab === 'batch');
+    document.getElementById('tabSingle').classList.toggle('active', tab === 'single');
+    document.getElementById('tabBatch').classList.toggle('active', tab === 'batch');
+  }
+
+  // ── Single ──────────────────────────────────────────────────────────────
+  async function normalizeSingle() {
+    const input = document.getElementById('singleInput').value.trim();
+    if (!input) return;
+    const btn = document.getElementById('singleBtn');
+    setBtnLoading(btn, 'singleBtnIcon', 'singleBtnText', 'Normalizando…');
+    hide('singleError'); hide('singleResult');
+    try {
+      const fd = new FormData(); fd.append('description', input);
+      const d = await apiFetch('/api/normalize/single', { method: 'POST', body: fd });
+      renderSingleResult(d, input);
+      addToHistory(input, d);
+    } catch (e) { showError('singleError', e.message); }
+    finally { resetBtn(btn, 'singleBtnIcon', 'singleBtnText', '✦', 'Normalizar'); }
+  }
+
+  function renderSingleResult(d, query) {
+    const box = document.getElementById('singleResult');
+    box.className = 'result-box ' + d.status.toLowerCase();
+    const labels = { FOUND: '✔ Referencia encontrada', NOT_FOUND: '✗ No identificada', REVIEW: '⚠ Revisar manualmente' };
+    document.getElementById('resStatusBadge').textContent = d.status;
+    document.getElementById('resStatusLabel').textContent = labels[d.status] || d.status;
+    const refEl = document.getElementById('resRef');
+    if (d.ref) {
+      refEl.textContent = d.ref;
+      show('copyBtn');
+      document.getElementById('copyBtn').dataset.ref = d.ref;
+    } else {
+      refEl.innerHTML = '<span class="ref-empty">— Sin referencia identificada —</span>';
+      hide('copyBtn');
+    }
+    const confEl = document.getElementById('resConf');
+    confEl.textContent = d.confidence; confEl.className = 'conf-' + d.confidence;
+    const srcMap = { cache: '📚 Modelo local', claude: '🤖 Claude IA', catalog: '📋 Catálogo directo', none: '—' };
+    document.getElementById('resSource').textContent = srcMap[d.source] || d.source;
+    if (d.notes) { document.getElementById('resNotes').textContent = d.notes; show('resNotesWrap'); }
+    else { hide('resNotesWrap'); }
+    document.getElementById('singleResult').style.display = 'block';
+  }
+
+  function copyRef() {
+    const ref = document.getElementById('copyBtn').dataset.ref;
+    if (!ref) return;
+    navigator.clipboard.writeText(ref).then(() => {
+      const btn = document.getElementById('copyBtn');
+      btn.textContent = '✓ Copiado';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = '📋 Copiar'; btn.classList.remove('copied'); }, 1800);
+    });
+  }
+
+  function clearSingle() {
+    document.getElementById('singleInput').value = '';
+    hide('singleResult'); hide('singleError');
+  }
+
+  // ── History ───────────────────────────────────────────────────────────
+  const MAX_HISTORY = 10;
+
+  function loadHistory() {
+    try { return JSON.parse(localStorage.getItem('skf-history') || '[]'); }
+    catch { return []; }
+  }
+  function saveHistory(h) { localStorage.setItem('skf-history', JSON.stringify(h)); }
+
+  function addToHistory(query, result) {
+    const h = loadHistory();
+    // Remove duplicate
+    const filtered = h.filter(i => i.query !== query);
+    filtered.unshift({ query, ref: result.ref, status: result.status });
+    if (filtered.length > MAX_HISTORY) filtered.pop();
+    saveHistory(filtered);
+    renderHistory();
+  }
+
+  function renderHistory() {
+    const h = loadHistory();
+    const section = document.getElementById('historySection');
+    const list = document.getElementById('historyList');
+    if (h.length === 0) { section.style.display = 'none'; return; }
+    section.style.display = 'block';
+    list.innerHTML = h.map(item => `
+      <div class="history-item" onclick="reuseHistory(${JSON.stringify(escHtml(item.query))})">
+        <span class="history-badge hb-${item.status.toLowerCase()}">${item.status}</span>
+        <span class="history-desc" title="${escHtml(item.query)}">${escHtml(item.query)}</span>
+        <span class="history-ref">${item.ref ? escHtml(item.ref) : '—'}</span>
+      </div>
+    `).join('');
+  }
+
+  function reuseHistory(query) {
+    document.getElementById('singleInput').value = query;
+    normalizeSingle();
+  }
+
+  function clearHistory() {
+    localStorage.removeItem('skf-history');
+    renderHistory();
+  }
+
+  // ── File drag & drop ──────────────────────────────────────────────────
+  function dragOver(e) { e.preventDefault(); document.getElementById('dropZone').classList.add('drag-over'); }
+  function dragLeave() { document.getElementById('dropZone').classList.remove('drag-over'); }
+  function dropFile(e) { e.preventDefault(); dragLeave(); const f = e.dataTransfer.files[0]; if (f) handleFile(f); }
+  function fileSelected(e) { const f = e.target.files[0]; if (f) handleFile(f); }
+
+  async function handleFile(file) {
+    _currentFile = file; _batchToken = null;
+    hide('batchError'); hide('chartSection'); hide('downloadBasic');
+    hide('proCard'); hide('proResults'); hide('progressPro');
+    document.getElementById('dropZone').classList.add('has-file');
+    document.getElementById('dropIcon').textContent = '✅';
+    document.getElementById('dropTitle').textContent = file.name;
+    document.getElementById('dropSub').textContent = `${(file.size/1024).toFixed(1)} KB`;
+    try {
+      const fd = new FormData(); fd.append('file', file);
+      const d = await apiFetch('/api/columns', { method: 'POST', body: fd });
+      document.getElementById('fileMeta').innerHTML = `📋 <strong>${d.rows.toLocaleString()}</strong> filas · <strong>${d.columns.length}</strong> columnas`;
+      const sel = document.getElementById('colSelect');
+      sel.innerHTML = d.columns.map(c => `<option value="${escHtml(c)}" ${c === d.suggested ? 'selected' : ''}>${escHtml(c)}</option>`).join('');
+      // Store preview data for each column by re-using server suggestion
+      _previewRowsData = {};
+      if (d.preview_rows) _previewRowsData[d.suggested] = d.preview_rows;
+      show('colSelector'); document.getElementById('batchBtn').disabled = false;
+      updatePreview();
+    } catch (e) { showError('batchError', e.message); }
+  }
+
+  function updatePreview() {
+    const col = document.getElementById('colSelect').value;
+    const rows = _previewRowsData[col];
+    const wrap = document.getElementById('previewWrap');
+    const table = document.getElementById('previewTable');
+    if (!rows || rows.length === 0) { wrap.style.display = 'none'; return; }
+    wrap.style.display = 'block';
+    table.innerHTML = rows.map((r, i) => `<tr><td style="color:var(--text-muted);width:24px;">${i+1}</td><td>${escHtml(r)}</td></tr>`).join('');
+  }
+
+  // ── Batch basic ──────────────────────────────────────────────────────
+  async function normalizeBatch() {
+    if (!_currentFile) return;
+    const col = document.getElementById('colSelect').value;
+    const btn = document.getElementById('batchBtn');
+    setBtnLoading(btn, 'batchBtnIcon', 'batchBtnText', 'Analizando…');
+    hide('batchError'); hide('chartSection'); hide('downloadBasic');
+    hide('proCard'); hide('proResults');
+    const bar = document.getElementById('progressBar');
+    bar.className = 'progress-bar-inner indeterminate';
+    show('progressWrap');
+    try {
+      const fd = new FormData(); fd.append('file', _currentFile); fd.append('col', col);
+      const d = await apiFetch('/api/normalize/batch', { method: 'POST', body: fd });
+      _batchToken = d.token;
+      bar.className = 'progress-bar-inner'; bar.style.width = '100%';
+      setTimeout(() => hide('progressWrap'), 600);
+      renderDonut('donutBasic', 'legendBasic', d.found, d.review, d.not_found);
+      show('chartSection'); show('downloadBasic');
+      const pending = d.review + d.not_found;
+      if (pending > 0) {
+        await loadEstimate(d.token, d.found, pending, d.total);
+        show('proCard');
+      }
+    } catch (e) { showError('batchError', e.message); hide('progressWrap'); }
+    finally { resetBtn(btn, 'batchBtnIcon', 'batchBtnText', '⚡', 'Analizar gratis'); }
+  }
+
+  async function loadEstimate(token, found, pending, total) {
+    try {
+      const d = await apiFetch(`/api/estimate/${token}`);
+      _estimateData = d;
+      const freePct = Math.round(found / total * 100);
+      const pendingPct = Math.round(pending / total * 100);
+
+      // Free resolution bar
+      document.getElementById('freePct').textContent = `${freePct}%`;
+      document.getElementById('freeDetail').textContent = `${found} referencias resueltas sin coste · ${pending} (${pendingPct}%) pendientes`;
+      document.getElementById('freeResBar').style.display = 'flex';
+
+      document.getElementById('proCardDesc').textContent =
+        `${pending} referencias pendientes podrían identificarse con Claude IA.`;
+
+      if (d.cost_eur === 0 || d.unique_api_calls === 0) {
+        document.getElementById('costMain').textContent = '€0.00';
+        document.getElementById('costSub').textContent = 'Todo en caché de sesión';
+      } else {
+        document.getElementById('costMain').textContent = `~€${d.cost_eur.toFixed(3)}`;
+        document.getElementById('costSub').textContent = `máx. €${d.cost_eur_max.toFixed(3)}`;
+      }
+      document.getElementById('costItems').textContent = `${d.pending} referencias`;
+
+      if (d.session_cached > 0) {
+        const cachedEl = document.getElementById('costCached');
+        cachedEl.textContent = `♻ ${d.session_cached} ya en caché de sesión`;
+        cachedEl.style.display = 'block';
+      }
+
+      document.getElementById('modalCostMain').textContent = `~€${d.cost_eur.toFixed(3)}`;
+      document.getElementById('modalCostSub').textContent = `${d.pending} referencias · máximo €${d.cost_eur_max.toFixed(3)}`;
+
+      if (!d.claude_available) {
+        document.getElementById('proBtn').disabled = true;
+        document.getElementById('proBtn').textContent = '⚠ Configura ANTHROPIC_API_KEY para activar PRO';
+      }
+    } catch { hide('proCard'); }
+  }
+
+  // ── PRO flow ──────────────────────────────────────────────────────────
+  function showProModal() { document.getElementById('proModal').classList.add('open'); }
+  function closeProModal() { document.getElementById('proModal').classList.remove('open'); }
+
+  async function runPro() {
+    closeProModal();
+    hide('proCard');
+    document.getElementById('progressProBar').style.width = '0%';
+    document.getElementById('progressProPct').textContent = '';
+    show('progressPro');
+    try {
+      await apiFetch(`/api/normalize/batch/pro/${_batchToken}`, { method: 'POST' });
+      startPollingPro();
+    } catch (e) { showError('batchError', e.message); hide('progressPro'); show('proCard'); }
+  }
+
+  function startPollingPro() {
+    if (_proPollingInterval) clearInterval(_proPollingInterval);
+    _proPollingInterval = setInterval(async () => {
+      try {
+        const d = await apiFetch(`/api/progress/${_batchToken}`);
+        if (d.status === 'processing') {
+          const pct = d.total > 0 ? Math.round(d.current / d.total * 100) : 0;
+          document.getElementById('progressProBar').style.width = `${Math.max(pct, 5)}%`;
+          document.getElementById('progressProPct').textContent = d.total > 0 ? `${pct}%` : '';
+        } else if (d.status === 'done') {
+          clearInterval(_proPollingInterval);
+          document.getElementById('progressProBar').style.width = '100%';
+          setTimeout(() => {
+            hide('progressPro');
+            renderProResults(d);
+          }, 500);
+        } else if (d.status === 'error') {
+          clearInterval(_proPollingInterval);
+          hide('progressPro');
+          showError('batchError', d.message || 'Error en el procesamiento PRO');
+          show('proCard');
+        }
+      } catch { /* keep polling */ }
+    }, 1500);
+  }
+
+  function renderProResults(d) {
+    renderDonut('donutPro', 'legendPro', d.found, d.review, d.not_found);
+    document.getElementById('improvementBadge').textContent =
+      `🤖 Claude mejoró ${d.improved} referencias adicionales`;
+    if (d.cost_eur > 0) {
+      const realCost = document.getElementById('realCostBadge');
+      realCost.textContent = `💶 Coste real: €${d.cost_eur.toFixed(4)}`;
+      realCost.style.display = 'inline-flex';
+    }
+    show('proResults');
+  }
+
+  // ── Downloads ────────────────────────────────────────────────────────
+  function downloadResult(version, fmt) {
+    if (!_batchToken) return;
+    const filterId = version === 'pro' ? 'filterPro' : 'filterBasic';
+    const filter = document.getElementById(filterId)?.value || 'all';
+    window.location.href = `/api/download/${_batchToken}?version=${version}&fmt=${fmt}&status_filter=${filter}`;
+  }
+
+  // ── Donut chart ───────────────────────────────────────────────────────
+  function renderDonut(svgId, legendId, found, review, notFound) {
+    const total = found + review + notFound;
+    if (total === 0) return;
+    const r = 46, cx = 60, cy = 60;
+    const circ = 2 * Math.PI * r;
+    const foundLen    = (found    / total) * circ;
+    const reviewLen   = (review   / total) * circ;
+    const notFoundLen = (notFound / total) * circ;
+    const foundAngle    = (found    / total) * 360;
+    const reviewAngle   = (review   / total) * 360;
+    const offset = circ / 4;
+
+    const seg = (len, color, rotate) => len < 0.5 ? '' :
+      `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${color}" stroke-width="18"
+        stroke-dasharray="${len} ${circ - len}" stroke-dashoffset="${offset}"
+        transform="rotate(${rotate} ${cx} ${cy})"/>`;
+
+    document.getElementById(svgId).innerHTML = `
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#E8EDF8" stroke-width="18"/>
+      ${seg(foundLen,    '#27AE60', 0)}
+      ${seg(reviewLen,   '#E67E22', foundAngle)}
+      ${seg(notFoundLen, '#E74C3C', foundAngle + reviewAngle)}
+      <text x="${cx}" y="${cy - 5}" text-anchor="middle" font-size="17" font-weight="800" fill="#1A1A2E">${total}</text>
+      <text x="${cx}" y="${cy + 10}" text-anchor="middle" font-size="8" font-weight="600" fill="#6C757D">TOTAL</text>
+    `;
+
+    const pct = n => total > 0 ? Math.round(n / total * 100) : 0;
+    document.getElementById(legendId).innerHTML = `
+      <div class="legend-item found">
+        <div class="legend-dot"></div>
+        <div><div class="legend-label">Encontradas</div><div class="legend-sub">${pct(found)}% del total</div></div>
+        <div class="legend-num">${found}</div>
+      </div>
+      <div class="legend-item review">
+        <div class="legend-dot"></div>
+        <div><div class="legend-label">Revisar</div><div class="legend-sub">${pct(review)}% del total</div></div>
+        <div class="legend-num">${review}</div>
+      </div>
+      <div class="legend-item not_found">
+        <div class="legend-dot"></div>
+        <div><div class="legend-label">No identificadas</div><div class="legend-sub">${pct(notFound)}% del total</div></div>
+        <div class="legend-num">${notFound}</div>
+      </div>
+    `;
+  }
+
+  // ── Clear batch ───────────────────────────────────────────────────────
+  function clearBatch() {
+    if (_proPollingInterval) { clearInterval(_proPollingInterval); _proPollingInterval = null; }
+    _currentFile = null; _batchToken = null;
+    document.getElementById('fileInput').value = '';
+    const dz = document.getElementById('dropZone');
+    dz.classList.remove('has-file');
+    document.getElementById('dropIcon').textContent = '📂';
+    document.getElementById('dropTitle').textContent = 'Arrastra el archivo aquí o haz clic para seleccionarlo';
+    document.getElementById('dropSub').textContent = 'Excel (.xlsx, .xls) o CSV (.csv)';
+    hide('colSelector'); hide('batchError'); hide('chartSection');
+    hide('downloadBasic'); hide('proCard'); hide('proResults'); hide('progressPro'); hide('progressWrap');
+    document.getElementById('batchBtn').disabled = true;
+    document.getElementById('previewWrap').style.display = 'none';
+  }
+
+  // ── Utils ──────────────────────────────────────────────────────────────
+  async function apiFetch(url, opts = {}) {
+    const r = await fetch(url, opts);
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.detail || `Error ${r.status}`); }
+    return r.json();
+  }
+  function show(id) { const el = document.getElementById(id); if (el) el.style.display = 'block'; }
+  function hide(id) { const el = document.getElementById(id); if (el) el.style.display = 'none'; }
+  function showError(id, msg) { const el = document.getElementById(id); el.textContent = msg; el.style.display = 'block'; }
+  function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+  function setBtnLoading(btn, iconId, textId, label) {
+    btn.disabled = true;
+    document.getElementById(iconId).innerHTML = '<div class="spinner"></div>';
+    document.getElementById(textId).textContent = label;
+  }
+  function resetBtn(btn, iconId, textId, icon, label) {
+    btn.disabled = false;
+    document.getElementById(iconId).textContent = icon;
+    document.getElementById(textId).textContent = label;
+  }
+
+  // Enter key on single
+  document.getElementById('singleInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); normalizeSingle(); }
+  });
+
+  // Close modal on overlay click
+  document.getElementById('proModal').addEventListener('click', function(e) {
+    if (e.target === this) closeProModal();
+  });
+
+  // Init
+  initTheme();
+  renderHistory();
+  checkStatus();
+</script>
+</body>
+</html>
