@@ -1,4 +1,6 @@
 import asyncio
+import hashlib
+import hmac
 import io
 import os
 import uuid
@@ -9,10 +11,11 @@ from typing import Optional
 
 import pandas as pd
 import chardet
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 from dotenv import load_dotenv
 from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
@@ -35,12 +38,28 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data")))
-API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-DB_HOST = os.getenv("DB_HOST", "")
-DB_USER = os.getenv("DB_USER", "")
-DB_PASS = os.getenv("DB_PASS", "")
-DB_NAME = os.getenv("DB_NAME", "")
-DB_PORT = int(os.getenv("DB_PORT", "3306"))
+API_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
+DB_HOST  = os.getenv("DB_HOST", "")
+DB_USER  = os.getenv("DB_USER", "")
+DB_PASS  = os.getenv("DB_PASS", "")
+DB_NAME  = os.getenv("DB_NAME", "")
+DB_PORT  = int(os.getenv("DB_PORT", "3306"))
+
+# Auth (opcional — si APP_PASSWORD está vacío, la app queda abierta)
+APP_PASSWORD = os.getenv("APP_PASSWORD", "")
+SECRET_KEY   = os.getenv("SECRET_KEY", "skf-secret-default-changeme")
+_COOKIE      = "skf_session"
+
+
+def _make_token() -> str:
+    return hmac.new(SECRET_KEY.encode(), APP_PASSWORD.encode(), hashlib.sha256).hexdigest()
+
+
+def _valid_session(request: Request) -> bool:
+    if not APP_PASSWORD:
+        return True
+    cookie = request.cookies.get(_COOKIE, "")
+    return hmac.compare_digest(cookie, _make_token())
 
 # In-memory stores
 _results_store: dict[str, dict] = {}
@@ -112,6 +131,22 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class AuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        # Rutas siempre públicas
+        if path in ("/login", "/logout", "/api/status"):
+            return await call_next(request)
+        if not _valid_session(request):
+            if path.startswith("/api/"):
+                return JSONResponse({"error": "No autorizado"}, status_code=401)
+            return RedirectResponse(url="/login", status_code=302)
+        return await call_next(request)
+
+
+app.add_middleware(AuthMiddleware)
 
 
 # ---------------------------------------------------------------------------
@@ -629,6 +664,133 @@ async def download_result(
         media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+
+_LOGIN_HTML = """<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SKF · Acceso</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #001f5b;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    padding: 2.5rem 2rem;
+    width: 100%;
+    max-width: 360px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    text-align: center;
+  }
+  .logo {
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: #003087;
+    letter-spacing: .08em;
+    margin-bottom: .25rem;
+  }
+  .subtitle {
+    font-size: .85rem;
+    color: #666;
+    margin-bottom: 2rem;
+  }
+  label {
+    display: block;
+    text-align: left;
+    font-size: .8rem;
+    font-weight: 600;
+    color: #444;
+    margin-bottom: .4rem;
+  }
+  input[type=password] {
+    width: 100%;
+    padding: .75rem 1rem;
+    border: 1.5px solid #ddd;
+    border-radius: 8px;
+    font-size: .95rem;
+    outline: none;
+    transition: border-color .2s;
+    margin-bottom: 1.25rem;
+  }
+  input[type=password]:focus { border-color: #003087; }
+  button {
+    width: 100%;
+    padding: .8rem;
+    background: #003087;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .2s;
+  }
+  button:hover { background: #0040b0; }
+  .error {
+    background: #fff0f0;
+    color: #c00;
+    border-radius: 6px;
+    padding: .6rem .9rem;
+    font-size: .85rem;
+    margin-bottom: 1rem;
+  }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo">SKF</div>
+  <div class="subtitle">Normalizador de Referencias</div>
+  {error_block}
+  <form method="post" action="/login">
+    <label for="pwd">Contraseña de acceso</label>
+    <input type="password" id="pwd" name="password" autofocus placeholder="••••••••">
+    <button type="submit">Entrar</button>
+  </form>
+</div>
+</body>
+</html>"""
+
+
+@app.get("/login", response_class=HTMLResponse, include_in_schema=False)
+async def login_page(error: str = ""):
+    err = '<div class="error">Contraseña incorrecta.</div>' if error else ""
+    return HTMLResponse(_LOGIN_HTML.replace("{error_block}", err))
+
+
+@app.post("/login", response_class=HTMLResponse, include_in_schema=False)
+async def login_submit(password: str = Form(...)):
+    if APP_PASSWORD and not hmac.compare_digest(password, APP_PASSWORD):
+        err = '<div class="error">Contraseña incorrecta.</div>'
+        return HTMLResponse(_LOGIN_HTML.replace("{error_block}", err), status_code=401)
+    response = RedirectResponse(url="/", status_code=302)
+    response.set_cookie(
+        key=_COOKIE,
+        value=_make_token(),
+        httponly=True,
+        samesite="lax",
+        max_age=60 * 60 * 24 * 30,   # 30 días
+    )
+    return response
+
+
+@app.get("/logout", include_in_schema=False)
+async def logout():
+    response = RedirectResponse(url="/login", status_code=302)
+    response.delete_cookie(_COOKIE)
+    return response
 
 
 # ---------------------------------------------------------------------------
