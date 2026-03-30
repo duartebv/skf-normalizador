@@ -45,6 +45,8 @@ DB_USER  = os.getenv("DB_USER", "")
 DB_PASS  = os.getenv("DB_PASS", "")
 DB_NAME  = os.getenv("DB_NAME", "")
 DB_PORT  = int(os.getenv("DB_PORT", "3306"))
+MAX_BATCH_ROWS = int(os.getenv("MAX_BATCH_ROWS", "2000"))
+COST_ALERT_EUR = float(os.getenv("COST_ALERT_EUR", "5.0"))
 
 # Auth (opcional — si APP_PASSWORD y USERS están vacíos, la app queda abierta)
 APP_PASSWORD = os.getenv("APP_PASSWORD", "")
@@ -219,7 +221,7 @@ app.add_middleware(AuthMiddleware)
 # Core processing logic
 # ---------------------------------------------------------------------------
 
-def _process_one(description: str, use_claude: bool = True, log_to_db: bool = False) -> dict:
+def _process_one(description: str, use_claude: bool = True, log_to_db: bool = False, username: str = "") -> dict:
     """Normaliza una descripción. Devuelve dict con ref, status, confidence, notes, source."""
     t0 = time.monotonic()
 
@@ -305,7 +307,7 @@ def _process_one(description: str, use_claude: bool = True, log_to_db: bool = Fa
     if log_to_db and db and db.available():
         ms = int((time.monotonic() - t0) * 1000)
         db.log_query(desc, desc_clean, result["ref"], result["status"],
-                     result["confidence"], result["source"], result.get("notes", ""), ms)
+                     result["confidence"], result["source"], result.get("notes", ""), ms, username)
 
     return result
 
@@ -488,6 +490,8 @@ def _run_pro_sync(token: str):
         "improved": improved, "cost_eur": cost_eur, "total": len(results),
     }
     logger.info(f"PRO batch done: token={token}, improved={improved}, cost=€{cost_eur}")
+    if cost_eur >= COST_ALERT_EUR:
+        logger.warning(f"⚠ ALERTA DE COSTE: gasto acumulado €{cost_eur:.4f} supera el umbral €{COST_ALERT_EUR}")
 
 
 # ---------------------------------------------------------------------------
@@ -496,12 +500,25 @@ def _run_pro_sync(token: str):
 
 @app.get("/api/status")
 async def status() -> JSONResponse:
+    import subprocess, sys
+    commit = ""
+    try:
+        commit = subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
+                                          cwd=str(BASE_DIR), stderr=subprocess.DEVNULL).decode().strip()
+    except Exception:
+        commit = "unknown"
     return JSONResponse({
         "cache_loaded": cache is not None,
         "catalog_loaded": catalog is not None,
         "claude_available": claude is not None,
         "cache_entries": len(cache.df) if cache else 0,
         "catalog_entries": len(catalog.refs) if catalog else 0,
+        "db_available": db.available() if db else False,
+        "session_cache_entries": len(_claude_session_cache),
+        "active_jobs": len(_results_store),
+        "user_count": len(_USERS) if _USERS else 0,
+        "commit": commit,
+        "uptime_jobs": len(_results_store),
     })
 
 
@@ -529,10 +546,11 @@ async def get_columns(file: UploadFile = File(...)) -> JSONResponse:
 
 
 @app.post("/api/normalize/single")
-async def normalize_single(description: str = Form(...)) -> JSONResponse:
+async def normalize_single(request: Request, description: str = Form(...)) -> JSONResponse:
     if not description.strip():
         raise HTTPException(400, "La descripción no puede estar vacía")
-    result = _process_one(description.strip(), log_to_db=True)
+    _v, username = _valid_session(request)
+    result = _process_one(description.strip(), log_to_db=True, username=username)
     return JSONResponse(result)
 
 
@@ -553,6 +571,9 @@ async def normalize_batch(
 
     if df.empty:
         raise HTTPException(400, "El archivo está vacío")
+
+    if len(df) > MAX_BATCH_ROWS:
+        raise HTTPException(400, f"El archivo tiene {len(df)} filas. El límite es {MAX_BATCH_ROWS} filas por análisis. Divide el archivo en partes más pequeñas.")
 
     if col and col in df.columns:
         desc_col = col
@@ -784,6 +805,89 @@ async def get_my_ip() -> JSONResponse:
             return f"error: {e}"
     ip = await asyncio.to_thread(_fetch)
     return JSONResponse({"outbound_ip": ip})
+
+
+@app.post("/api/cache/clear")
+async def clear_cache(request: Request) -> JSONResponse:
+    """Vacía la caché de sesión de Claude sin reiniciar el servidor."""
+    global _claude_session_cache
+    _valid, username = _valid_session(request)
+    n = len(_claude_session_cache)
+    _claude_session_cache.clear()
+    logger.info(f"Caché de sesión vaciada por {username}: {n} entradas eliminadas")
+    return JSONResponse({"cleared": n, "ok": True})
+
+
+@app.post("/api/cache/correct")
+async def correct_cache(
+    request: Request,
+    description: str = Form(...),
+    ref_correct: str = Form(...),
+) -> JSONResponse:
+    """Guarda una corrección manual en la caché de Claude."""
+    global _claude_session_cache
+    _valid, username = _valid_session(request)
+    desc_clean = clean_description(description.strip())
+    ref_clean = ref_correct.strip().upper()
+    _claude_session_cache[desc_clean] = ref_clean
+    if db and db.available():
+        db.save_claude_cache(desc_clean, ref_clean, "FOUND")
+        logger.info(f"Corrección manual guardada por {username}: '{desc_clean}' → {ref_clean}")
+    return JSONResponse({"ok": True, "desc_clean": desc_clean, "ref": ref_clean})
+
+
+@app.post("/api/normalize/batch/rerun/{token}")
+async def normalize_batch_rerun(token: str, status_filter: str = Form("REVIEW")) -> JSONResponse:
+    """Re-procesa solo los items con un estado específico (REVIEW por defecto) usando la caché actualizada."""
+    entry = _results_store.get(token)
+    if not entry:
+        raise HTTPException(404, "Token no encontrado")
+
+    results = list(entry.get("results_pro") or entry["results"])
+    descriptions = entry["descriptions"]
+
+    rerun_indices = [i for i, r in enumerate(results) if r["status"] == status_filter.upper()]
+    improved = 0
+    for idx in rerun_indices:
+        desc = descriptions[idx]
+        desc_clean = clean_description(desc)
+        # Check session cache first
+        if desc_clean in _claude_session_cache:
+            ref = _claude_session_cache[desc_clean]
+            if ref and ref.upper() not in ("UNKNOWN", "NAN", ""):
+                if catalog:
+                    found, matched_ref, cat_score = catalog.validate(ref)
+                else:
+                    found, matched_ref, cat_score = True, ref, 100.0
+                if found:
+                    results[idx] = {"ref": matched_ref or ref, "status": "FOUND",
+                                    "confidence": "HIGH", "notes": "Corrección manual desde caché", "source": "cache"}
+                    improved += 1
+        else:
+            # Re-run through full pipeline with claude
+            new_result = _process_one(desc, use_claude=True, log_to_db=False)
+            if new_result["status"] == "FOUND":
+                results[idx] = new_result
+                improved += 1
+
+    df = _read_file(entry["file_content"], entry["original_filename"])
+    if entry.get("results_pro"):
+        entry["results_pro"] = results
+        entry["excel_pro"] = _build_output_excel(df, results)
+        entry["csv_pro"] = _build_output_csv(df, results)
+    else:
+        entry["results"] = results
+        entry["excel_basic"] = _build_output_excel(df, results)
+        entry["csv_basic"] = _build_output_csv(df, results)
+
+    counts = _count_statuses(results)
+    return JSONResponse({
+        "improved": improved,
+        "found": counts["FOUND"],
+        "not_found": counts["NOT_FOUND"],
+        "review": counts["REVIEW"],
+        "total": len(results),
+    })
 
 
 # ---------------------------------------------------------------------------

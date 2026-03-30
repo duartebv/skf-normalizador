@@ -256,7 +256,7 @@
     .history-section { margin-top: 1.5rem; display: none; }
     .history-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: .6rem; }
     .history-title { font-size: .75rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: .05em; }
-    .history-list { display: flex; flex-direction: column; gap: .35rem; }
+    .history-list { display: flex; flex-direction: column; gap: .35rem; max-height: 280px; overflow-y: auto; }
     .history-item {
       display: flex; align-items: center; gap: .75rem; padding: .5rem .85rem;
       background: var(--gray-light); border: 1.5px solid var(--border);
@@ -550,7 +550,19 @@
           <span class="feedback-label">¿Es correcta?</span>
           <button class="btn-icon" id="thumbsUp" onclick="sendFeedback(true)" title="Sí, es correcta">👍</button>
           <button class="btn-icon" id="thumbsDown" onclick="sendFeedback(false)" title="No es correcta">👎</button>
+          <button class="btn-icon" id="correctBtn" onclick="toggleCorrection()" title="Corregir resultado" style="margin-left:.5rem;">✏️ Corregir</button>
           <span class="feedback-sent" id="feedbackSent" style="display:none;">✓ ¡Gracias por tu feedback!</span>
+        </div>
+        <!-- Corrección manual -->
+        <div id="correctionRow" style="display:none;margin-top:.75rem;padding-top:.75rem;border-top:1px solid var(--border);">
+          <div style="font-size:.8rem;color:var(--text-muted);margin-bottom:.4rem;font-weight:600;">✏️ Corrección manual</div>
+          <div style="display:flex;gap:.5rem;align-items:center;">
+            <input type="text" id="correctionInput" placeholder="Referencia correcta, ej: 6205-2RS1"
+              style="flex:1;padding:.5rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-size:.9rem;background:var(--card-bg);color:var(--text);"
+              onkeydown="if(event.key==='Enter')saveCorrection()">
+            <button class="btn btn-primary" style="padding:.5rem 1rem;font-size:.85rem;" onclick="saveCorrection()">Guardar</button>
+          </div>
+          <div id="correctionSent" style="display:none;color:var(--green);font-size:.8rem;margin-top:.3rem;">✓ Corrección guardada en caché</div>
         </div>
       </div>
 
@@ -558,7 +570,10 @@
       <div class="history-section" id="historySection">
         <div class="history-header">
           <span class="history-title">Historial de búsquedas</span>
-          <button class="btn-outline-sm" onclick="clearHistory()">Borrar</button>
+          <div style="display:flex;gap:.4rem;">
+            <button class="btn-outline-sm" onclick="clearHistory()">Borrar</button>
+            <button class="btn-icon" onclick="exportHistory()" title="Exportar historial a CSV">📥 Exportar</button>
+          </div>
         </div>
         <div class="history-list" id="historyList"></div>
       </div>
@@ -629,6 +644,12 @@
 
       <!-- Descargas versión básica -->
       <div class="download-section" id="downloadBasic">
+        <div id="rerunSectionBasic" style="margin-bottom:.75rem;display:none;">
+          <button class="btn btn-outline" id="rerunBtnBasic" onclick="rerunReview('basic')" style="font-size:.85rem;padding:.5rem 1rem;">
+            🔄 Re-analizar REVIEW con correcciones guardadas
+          </button>
+          <span id="rerunResultBasic" style="font-size:.82rem;color:var(--green);margin-left:.75rem;display:none;"></span>
+        </div>
         <div class="download-label">Descargar resultados básicos</div>
         <div class="download-row">
           <select class="download-filter" id="filterBasic" style="width:auto;padding:.4rem .65rem;font-size:.82rem;">
@@ -697,6 +718,12 @@
           </div>
           <div class="donut-legend" id="legendPro"></div>
         </div>
+        <div id="rerunSection" style="margin-bottom:.75rem;display:none;">
+          <button class="btn btn-outline" id="rerunBtn" onclick="rerunReview()" style="font-size:.85rem;padding:.5rem 1rem;">
+            🔄 Re-analizar REVIEW con caché actualizada
+          </button>
+          <span id="rerunResult" style="font-size:.82rem;color:var(--green);margin-left:.75rem;display:none;"></span>
+        </div>
         <div style="margin-top:1rem;">
           <div class="download-label">Descargar resultados PRO</div>
           <div class="download-row">
@@ -717,6 +744,9 @@
 
   <!-- ── Panel: Estadísticas ── -->
   <div class="panel" id="panelStats">
+    <div style="display:flex;justify-content:flex-end;margin-bottom:.75rem;">
+      <button class="btn-icon" onclick="refreshStats()" title="Actualizar estadísticas">🔄 Actualizar</button>
+    </div>
     <div id="statsLoading" class="card stats-loading">⏳ Cargando estadísticas…</div>
     <div id="statsDashboard" style="display:none;">
 
@@ -881,6 +911,10 @@
     document.getElementById('thumbsDown').disabled = false;
     document.getElementById('thumbsUp').classList.remove('active-up', 'active-down');
     document.getElementById('thumbsDown').classList.remove('active-up', 'active-down');
+    // Reset correction row
+    document.getElementById('correctionRow').style.display = 'none';
+    document.getElementById('correctionSent').style.display = 'none';
+    document.getElementById('correctionInput').value = '';
   }
 
   function copyRef() {
@@ -911,6 +945,25 @@
     document.getElementById('feedbackSent').style.display = 'inline';
   }
 
+  function toggleCorrection() {
+    const row = document.getElementById('correctionRow');
+    row.style.display = row.style.display === 'none' ? 'block' : 'none';
+    if (row.style.display !== 'none') document.getElementById('correctionInput').focus();
+  }
+
+  async function saveCorrection() {
+    const ref = document.getElementById('correctionInput').value.trim();
+    if (!ref || !_lastQuery) return;
+    try {
+      const fd = new FormData();
+      fd.append('description', _lastQuery);
+      fd.append('ref_correct', ref);
+      await apiFetch('/api/cache/correct', { method: 'POST', body: fd });
+      document.getElementById('correctionSent').style.display = 'block';
+      document.getElementById('correctionInput').value = '';
+    } catch (e) { alert('Error guardando corrección: ' + e.message); }
+  }
+
   function clearSingle() {
     document.getElementById('singleInput').value = '';
     hide('singleResult'); hide('singleError');
@@ -918,7 +971,7 @@
   }
 
   // ── History ───────────────────────────────────────────────────────────
-  const MAX_HISTORY = 10;
+  const MAX_HISTORY = 50;
 
   function loadHistory() {
     try { return JSON.parse(localStorage.getItem('skf-history') || '[]'); }
@@ -958,6 +1011,19 @@
   function clearHistory() {
     localStorage.removeItem('skf-history');
     renderHistory();
+  }
+
+  function exportHistory() {
+    const h = loadHistory();
+    if (h.length === 0) return;
+    const rows = [['Descripción', 'Referencia SKF', 'Estado']];
+    h.forEach(item => rows.push([item.query, item.ref || '', item.status]));
+    const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url;
+    a.download = `historial_skf_${new Date().toISOString().slice(0,10)}.csv`;
+    a.click(); URL.revokeObjectURL(url);
   }
 
   // ── File drag & drop ──────────────────────────────────────────────────
@@ -1016,6 +1082,7 @@
       setTimeout(() => hide('progressWrap'), 600);
       renderDonut('donutBasic', 'legendBasic', d.found, d.review, d.not_found);
       show('chartSection'); show('downloadBasic');
+      show('rerunSectionBasic');
       const pending = d.review + d.not_found;
       if (pending > 0) {
         await loadEstimate(d.token, d.found, pending, d.total);
@@ -1104,6 +1171,7 @@
   }
 
   function renderProResults(d) {
+    document.getElementById('rerunSection').style.display = 'block';
     renderDonut('donutPro', 'legendPro', d.found, d.review, d.not_found);
     document.getElementById('improvementBadge').textContent =
       `🤖 Claude mejoró ${d.improved} referencias adicionales`;
@@ -1113,6 +1181,27 @@
       realCost.style.display = 'inline-flex';
     }
     show('proResults');
+  }
+
+  async function rerunReview(version = 'pro') {
+    if (!_batchToken) return;
+    const btnId = version === 'pro' ? 'rerunBtn' : 'rerunBtnBasic';
+    const resultId = version === 'pro' ? 'rerunResult' : 'rerunResultBasic';
+    const btn = document.getElementById(btnId);
+    const orig = btn.textContent;
+    btn.disabled = true; btn.textContent = '⏳ Re-analizando…';
+    document.getElementById(resultId).style.display = 'none';
+    try {
+      const fd = new FormData(); fd.append('status_filter', 'REVIEW');
+      const d = await apiFetch(`/api/normalize/batch/rerun/${_batchToken}`, { method: 'POST', body: fd });
+      const msg = `✓ ${d.improved} mejoras · ${d.found} encontradas`;
+      document.getElementById(resultId).textContent = msg;
+      document.getElementById(resultId).style.display = 'inline';
+      // Refresh the donut
+      if (version === 'pro') renderDonut('donutPro', 'legendPro', d.found, d.review, d.not_found);
+      else renderDonut('donutBasic', 'legendBasic', d.found, d.review, d.not_found);
+    } catch (e) { alert('Error: ' + e.message); }
+    finally { btn.disabled = false; btn.textContent = orig; }
   }
 
   // ── Downloads ────────────────────────────────────────────────────────
@@ -1202,6 +1291,11 @@
     } catch (e) {
       document.getElementById('statsLoading').textContent = '⚠ Error cargando estadísticas: ' + e.message;
     }
+  }
+
+  function refreshStats() {
+    _statsLoaded = false;
+    loadStats();
   }
 
   function renderStats(d) {

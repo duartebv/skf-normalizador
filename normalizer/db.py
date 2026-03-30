@@ -36,9 +36,24 @@ class Database:
             import pymysql
             self._conn = pymysql.connect(**self._config)
             logger.info("MySQL conectado correctamente")
+            self._migrate()
         except Exception as e:
             logger.warning(f"MySQL no disponible: {e}")
             self._conn = None
+
+    def _migrate(self):
+        """Añade columnas nuevas de forma no destructiva."""
+        cur = self._cursor()
+        if not cur:
+            return
+        migrations = [
+            "ALTER TABLE query_log ADD COLUMN IF NOT EXISTS username VARCHAR(50) DEFAULT NULL",
+        ]
+        for sql in migrations:
+            try:
+                cur.execute(sql)
+            except Exception as e:
+                logger.debug(f"Migration skipped: {e}")
 
     def _cursor(self):
         if not self._conn:
@@ -59,7 +74,7 @@ class Database:
 
     def log_query(self, description_original: str, description_clean: str,
                   ref_found: Optional[str], status: str, confidence: str,
-                  source: str, notes: str, response_ms: int):
+                  source: str, notes: str, response_ms: int, username: str = ""):
         """Registra una consulta individual en query_log."""
         cur = self._cursor()
         if not cur:
@@ -67,11 +82,11 @@ class Database:
         try:
             cur.execute("""
                 INSERT INTO query_log
-                    (description_original, description_clean, ref_found, status, confidence, source, notes, response_ms)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    (description_original, description_clean, ref_found, status, confidence, source, notes, response_ms, username)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
             """, (description_original[:2000], description_clean[:500] if description_clean else None,
                   ref_found[:100] if ref_found else None, status, confidence, source,
-                  notes[:2000] if notes else None, response_ms))
+                  notes[:2000] if notes else None, response_ms, username[:50] if username else ""))
         except Exception as e:
             logger.debug(f"log_query error: {e}")
 
@@ -240,6 +255,15 @@ class Database:
                 GROUP BY DATE(created_at) ORDER BY day ASC
             """)
             result["queries_by_day"] = [{"day": str(r["day"]), "count": r["cnt"]} for r in cur.fetchall()]
+            try:
+                cur.execute("""
+                    SELECT username, COUNT(*) as cnt FROM query_log
+                    WHERE username IS NOT NULL AND username != ''
+                    GROUP BY username ORDER BY cnt DESC LIMIT 10
+                """)
+                result["top_users"] = [{"user": r["username"], "count": r["cnt"]} for r in cur.fetchall()]
+            except Exception:
+                result["top_users"] = []
             cur.execute("SELECT COUNT(*) as cnt FROM claude_cache WHERE status = 'FOUND'")
             result["claude_cache_entries"] = int(cur.fetchone()["cnt"] or 0)
             cur.execute("""
