@@ -554,20 +554,20 @@
         <div class="feedback-row" id="feedbackRow">
           <span class="feedback-label">¿Es correcta?</span>
           <button class="btn-icon" id="thumbsUp" onclick="sendFeedback(true)" title="Sí, es correcta">👍</button>
-          <button class="btn-icon" id="thumbsDown" onclick="sendFeedback(false)" title="No es correcta">👎</button>
-          <button class="btn-icon" id="correctBtn" onclick="toggleCorrection()" title="Corregir resultado" style="margin-left:.5rem;">✏️ Corregir</button>
-          <span class="feedback-sent" id="feedbackSent" style="display:none;">✓ ¡Gracias por tu feedback!</span>
+          <button class="btn-icon" id="thumbsDown" onclick="sendFeedback(false)" title="No es correcta — indicar la referencia correcta">👎</button>
+          <span class="feedback-sent" id="feedbackSent" style="display:none;">✓ ¡Gracias!</span>
         </div>
-        <!-- Corrección manual -->
+        <!-- Corrección manual (se abre automáticamente al dar 👎) -->
         <div id="correctionRow" style="display:none;margin-top:.75rem;padding-top:.75rem;border-top:1px solid var(--border);">
-          <div style="font-size:.8rem;color:var(--text-muted);margin-bottom:.4rem;font-weight:600;">✏️ Corrección manual</div>
+          <div id="correctionLabel" style="font-size:.8rem;margin-bottom:.5rem;font-weight:600;color:var(--red);">👎 ¿Cuál es la referencia correcta? <span style="font-weight:400;color:var(--text-muted);">(se guardará en el modelo)</span></div>
           <div style="display:flex;gap:.5rem;align-items:center;">
-            <input type="text" id="correctionInput" placeholder="Referencia correcta, ej: 6205-2RS1"
-              style="flex:1;padding:.5rem .75rem;border:1.5px solid var(--border);border-radius:8px;font-size:.9rem;background:var(--card-bg);color:var(--text);"
+            <input type="text" id="correctionInput" placeholder="Ej: 6205-2RS1/C3"
+              style="flex:1;padding:.5rem .75rem;border:1.5px solid var(--red);border-radius:8px;font-size:.9rem;background:var(--card-bg);color:var(--text);font-family:'SF Mono','Fira Code',monospace;"
               onkeydown="if(event.key==='Enter')saveCorrection()">
-            <button class="btn btn-primary" style="padding:.5rem 1rem;font-size:.85rem;" onclick="saveCorrection()">Guardar</button>
+            <button class="btn btn-primary" style="padding:.5rem 1rem;font-size:.85rem;" onclick="saveCorrection()">💾 Guardar</button>
+            <button class="btn-icon" style="padding:.5rem .7rem;" onclick="document.getElementById('correctionRow').style.display='none'" title="Cerrar sin corregir">✕</button>
           </div>
-          <div id="correctionSent" style="display:none;color:var(--green);font-size:.8rem;margin-top:.3rem;">✓ Corrección guardada en caché</div>
+          <div id="correctionSent" style="display:none;font-size:.8rem;margin-top:.4rem;color:var(--green);">✓ Guardada en el modelo — se aplicará desde ahora en todas las consultas</div>
         </div>
       </div>
 
@@ -928,6 +928,7 @@
     box.style.display = 'block';
 
     // Mostrar feedback row y resetear estado
+    _feedbackSent = false;
     const fbRow = document.getElementById('feedbackRow');
     fbRow.style.display = 'flex';
     document.getElementById('feedbackSent').style.display = 'none';
@@ -939,6 +940,8 @@
     document.getElementById('correctionRow').style.display = 'none';
     document.getElementById('correctionSent').style.display = 'none';
     document.getElementById('correctionInput').value = '';
+    const corrBtn = document.querySelector('#correctionRow .btn-primary');
+    if (corrBtn) { corrBtn.disabled = false; corrBtn.innerHTML = '💾 Guardar'; }
   }
 
   function copyRef() {
@@ -953,11 +956,14 @@
     });
   }
 
+  let _feedbackSent = false; // evita enviar feedback doble
+
   async function sendFeedback(thumbsUp) {
     if (!_lastResult) return;
     document.getElementById('thumbsUp').disabled = true;
     document.getElementById('thumbsDown').disabled = true;
     document.getElementById(thumbsUp ? 'thumbsUp' : 'thumbsDown').classList.add(thumbsUp ? 'active-up' : 'active-down');
+    _feedbackSent = true;
     try {
       const fd = new FormData();
       fd.append('description', _lastQuery || '');
@@ -966,26 +972,59 @@
       fd.append('source', _lastResult.source || '');
       await apiFetch('/api/feedback', { method: 'POST', body: fd });
     } catch (_) { /* silencioso */ }
-    document.getElementById('feedbackSent').style.display = 'inline';
-  }
 
-  function toggleCorrection() {
-    const row = document.getElementById('correctionRow');
-    row.style.display = row.style.display === 'none' ? 'block' : 'none';
-    if (row.style.display !== 'none') document.getElementById('correctionInput').focus();
+    if (thumbsUp) {
+      // 👍 — solo mostrar confirmación
+      document.getElementById('feedbackSent').style.display = 'inline';
+    } else {
+      // 👎 — abrir campo de corrección automáticamente
+      document.getElementById('feedbackSent').style.display = 'none';
+      const row = document.getElementById('correctionRow');
+      row.style.display = 'block';
+      document.getElementById('correctionInput').focus();
+    }
   }
 
   async function saveCorrection() {
-    const ref = document.getElementById('correctionInput').value.trim();
+    const ref = document.getElementById('correctionInput').value.trim().toUpperCase();
     if (!ref || !_lastQuery) return;
+    const btn = document.querySelector('#correctionRow .btn-primary');
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = bearingSVG(16, '#fff', '#fff') + ' Guardando…';
     try {
       const fd = new FormData();
       fd.append('description', _lastQuery);
       fd.append('ref_correct', ref);
       await apiFetch('/api/cache/correct', { method: 'POST', body: fd });
+
+      // Si no se había enviado feedback negativo, enviarlo ahora junto con la corrección
+      if (!_feedbackSent && _lastResult) {
+        try {
+          const fd2 = new FormData();
+          fd2.append('description', _lastQuery);
+          fd2.append('ref', _lastResult.ref || '');
+          fd2.append('thumbs_up', 'false');
+          fd2.append('source', _lastResult.source || '');
+          await apiFetch('/api/feedback', { method: 'POST', body: fd2 });
+          _feedbackSent = true;
+        } catch (_) { /* silencioso */ }
+      }
+
       document.getElementById('correctionSent').style.display = 'block';
       document.getElementById('correctionInput').value = '';
-    } catch (e) { alert('Error guardando corrección: ' + e.message); }
+      btn.innerHTML = '✓ Guardada';
+
+      // Actualizar historial con la referencia corregida
+      if (_lastQuery) {
+        const h = loadHistory();
+        const idx = h.findIndex(i => i.query === _lastQuery);
+        if (idx !== -1) { h[idx].ref = ref; h[idx].status = 'FOUND'; saveHistory(h); renderHistory(); }
+      }
+    } catch (e) {
+      btn.innerHTML = orig; btn.disabled = false;
+      alert('Error guardando corrección: ' + e.message);
+    }
   }
 
   function clearSingle() {

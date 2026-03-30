@@ -836,6 +836,45 @@ async def correct_cache(
     return JSONResponse({"ok": True, "desc_clean": desc_clean, "ref": ref_clean})
 
 
+@app.get("/api/cache/export")
+async def export_cache() -> StreamingResponse:
+    """Exporta toda la caché de correcciones como Excel para merge con el modelo base."""
+    rows = []
+    if db and db.available():
+        rows = db.get_full_cache_for_export()
+    if not rows:
+        rows = [{"description_clean": k, "ref_result": v, "status": "FOUND", "used_count": 1, "last_used_at": None}
+                for k, v in _claude_session_cache.items()]
+    df_export = pd.DataFrame([{
+        "DESCRIPCION_LIMPIA": r["description_clean"],
+        "REF_NORMALIZADA": r["ref_result"],
+        "USOS": r.get("used_count", 1),
+        "ULTIMA_VEZ": str(r["last_used_at"]) if r.get("last_used_at") else "",
+    } for r in rows])
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+        df_export.to_excel(writer, index=False, sheet_name="Correcciones")
+        ws = writer.sheets["Correcciones"]
+        hfill = PatternFill("solid", fgColor="0040A0")
+        hfont = Font(color="FFFFFF", bold=True)
+        for cell in ws[1]:
+            cell.fill = hfill
+            cell.font = hfont
+            cell.alignment = Alignment(horizontal="center")
+        for col in ws.columns:
+            ws.column_dimensions[col[0].column_letter].width = min(
+                max(len(str(col[0].value or "")),
+                    max((len(str(c.value or "")) for c in col[1:]), default=0)) + 3, 60)
+    output.seek(0)
+    from datetime import date
+    filename = f"correcciones_modelo_{date.today().isoformat()}.xlsx"
+    return StreamingResponse(
+        output,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.post("/api/normalize/batch/rerun/{token}")
 async def normalize_batch_rerun(token: str, status_filter: str = Form("REVIEW")) -> JSONResponse:
     """Re-procesa solo los items con un estado específico (REVIEW por defecto) usando la caché actualizada."""

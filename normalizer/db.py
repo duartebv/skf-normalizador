@@ -146,6 +146,23 @@ class Database:
             logger.debug(f"get_all_claude_cache error: {e}")
             return {}
 
+    def get_full_cache_for_export(self) -> list[dict]:
+        """Devuelve toda la caché de correcciones para exportar al modelo Excel."""
+        cur = self._cursor()
+        if not cur:
+            return []
+        try:
+            cur.execute("""
+                SELECT description_clean, ref_result, status, used_count, last_used_at
+                FROM claude_cache
+                WHERE status = 'FOUND' AND ref_result IS NOT NULL
+                ORDER BY used_count DESC, last_used_at DESC
+            """)
+            return cur.fetchall()
+        except Exception as e:
+            logger.debug(f"get_full_cache_for_export error: {e}")
+            return []
+
     # ── Batch log ────────────────────────────────────────────────────────
 
     def log_batch(self, token: str, filename: str, total_rows: int,
