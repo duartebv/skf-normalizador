@@ -5,6 +5,7 @@ import io
 import os
 import uuid
 import logging
+import urllib.request
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
@@ -45,21 +46,85 @@ DB_PASS  = os.getenv("DB_PASS", "")
 DB_NAME  = os.getenv("DB_NAME", "")
 DB_PORT  = int(os.getenv("DB_PORT", "3306"))
 
-# Auth (opcional — si APP_PASSWORD está vacío, la app queda abierta)
+# Auth (opcional — si APP_PASSWORD y USERS están vacíos, la app queda abierta)
 APP_PASSWORD = os.getenv("APP_PASSWORD", "")
 SECRET_KEY   = os.getenv("SECRET_KEY", "skf-secret-default-changeme")
+USERS_RAW    = os.getenv("USERS", "")   # formato: "user1:pass1,user2:pass2"
 _COOKIE      = "skf_session"
+_USER_COOKIE = "skf_user"
+
+# Construir diccionario de usuarios
+_USERS: dict[str, str] = {}
+def _parse_users():
+    global _USERS
+    _USERS = {}
+    if USERS_RAW:
+        for pair in USERS_RAW.split(","):
+            pair = pair.strip()
+            if ":" in pair:
+                u, p = pair.split(":", 1)
+                _USERS[u.strip()] = p.strip()
+    if not _USERS and APP_PASSWORD:
+        _USERS["admin"] = APP_PASSWORD
+_parse_users()
 
 
-def _make_token() -> str:
-    return hmac.new(SECRET_KEY.encode(), APP_PASSWORD.encode(), hashlib.sha256).hexdigest()
+def _make_token(username: str) -> str:
+    password = _USERS.get(username, "")
+    return hmac.new(SECRET_KEY.encode(), f"{username}:{password}".encode(), hashlib.sha256).hexdigest()
 
 
-def _valid_session(request: Request) -> bool:
-    if not APP_PASSWORD:
-        return True
-    cookie = request.cookies.get(_COOKIE, "")
-    return hmac.compare_digest(cookie, _make_token())
+def _valid_session(request: Request) -> tuple[bool, str]:
+    """Devuelve (es_válida, username). Si no hay usuarios configurados, siempre True."""
+    if not _USERS:
+        return True, "anonymous"
+    session_cookie = request.cookies.get(_COOKIE, "")
+    user_hint = request.cookies.get(_USER_COOKIE, "")
+    # Ruta rápida: comprobar usuario indicado en cookie
+    if user_hint in _USERS:
+        try:
+            if hmac.compare_digest(session_cookie, _make_token(user_hint)):
+                return True, user_hint
+        except Exception:
+            pass
+    # Ruta lenta: probar todos los usuarios
+    for username in _USERS:
+        try:
+            if hmac.compare_digest(session_cookie, _make_token(username)):
+                return True, username
+        except Exception:
+            pass
+    return False, ""
+
+
+# Rate limiting para el login (en memoria)
+_login_attempts: dict[str, list[float]] = {}
+_RATE_LIMIT_MAX    = 5      # intentos fallidos máximos
+_RATE_LIMIT_WINDOW = 900.0  # ventana de 15 minutos
+
+
+def _get_client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _is_rate_limited(ip: str) -> bool:
+    import time as _time
+    now = _time.monotonic()
+    attempts = [t for t in _login_attempts.get(ip, []) if now - t < _RATE_LIMIT_WINDOW]
+    _login_attempts[ip] = attempts
+    return len(attempts) >= _RATE_LIMIT_MAX
+
+
+def _record_failed_login(ip: str):
+    import time as _time
+    _login_attempts.setdefault(ip, []).append(_time.monotonic())
+
+
+def _clear_login_attempts(ip: str):
+    _login_attempts.pop(ip, None)
 
 # In-memory stores
 _results_store: dict[str, dict] = {}
@@ -139,7 +204,8 @@ class AuthMiddleware(BaseHTTPMiddleware):
         # Rutas siempre públicas
         if path in ("/login", "/logout", "/api/status"):
             return await call_next(request)
-        if not _valid_session(request):
+        valid, _username = _valid_session(request)
+        if not valid:
             if path.startswith("/api/"):
                 return JSONResponse({"error": "No autorizado"}, status_code=401)
             return RedirectResponse(url="/login", status_code=302)
@@ -667,6 +733,60 @@ async def download_result(
 
 
 # ---------------------------------------------------------------------------
+# Stats, feedback y utilidades
+# ---------------------------------------------------------------------------
+
+@app.get("/api/stats")
+async def get_stats() -> JSONResponse:
+    """Dashboard de estadísticas de uso."""
+    if db and db.available():
+        stats = db.get_detailed_stats()
+    else:
+        stats = {
+            "total_queries": 0, "found": 0, "not_found": 0, "review": 0,
+            "from_cache": 0, "from_claude": 0, "from_catalog": 0,
+            "avg_response_ms": 0, "claude_cache_entries": 0,
+            "top_refs": [], "queries_by_day": [],
+            "total_batches": 0, "total_batch_rows": 0, "pro_batches": 0,
+            "total_cost_eur": 0.0,
+            "feedback_total": 0, "feedback_positive": 0, "feedback_negative": 0,
+        }
+    # Enriquecer con datos en memoria
+    stats["session_cache_entries"] = len(_claude_session_cache)
+    stats["active_jobs"] = len(_results_store)
+    # Número de usuarios configurados
+    stats["user_count"] = len(_USERS) if _USERS else 0
+    return JSONResponse(stats)
+
+
+@app.post("/api/feedback")
+async def post_feedback(
+    description: str = Form(...),
+    ref: str = Form(""),
+    thumbs_up: str = Form(...),   # "true" / "false"
+    source: str = Form(""),
+) -> JSONResponse:
+    """Registra el feedback del usuario (👍/👎) sobre un resultado."""
+    positive = thumbs_up.lower() in ("true", "1", "yes")
+    if db and db.available():
+        db.log_feedback(description, ref or None, positive, source)
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/my-ip")
+async def get_my_ip() -> JSONResponse:
+    """Devuelve la IP saliente del servidor (útil para whitelistear en MySQL)."""
+    def _fetch():
+        try:
+            with urllib.request.urlopen("https://api.ipify.org", timeout=5) as r:
+                return r.read().decode().strip()
+        except Exception as e:
+            return f"error: {e}"
+    ip = await asyncio.to_thread(_fetch)
+    return JSONResponse({"outbound_ip": ip})
+
+
+# ---------------------------------------------------------------------------
 # Auth endpoints
 # ---------------------------------------------------------------------------
 
@@ -715,7 +835,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
     color: #444;
     margin-bottom: .4rem;
   }
-  input[type=password] {
+  input[type=password], input[type=text] {
     width: 100%;
     padding: .75rem 1rem;
     border: 1.5px solid #ddd;
@@ -725,7 +845,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
     transition: border-color .2s;
     margin-bottom: 1.25rem;
   }
-  input[type=password]:focus { border-color: #003087; }
+  input[type=password]:focus, input[type=text]:focus { border-color: #003087; }
   button {
     width: 100%;
     padding: .8rem;
@@ -755,6 +875,7 @@ _LOGIN_HTML = """<!DOCTYPE html>
   <div class="subtitle">Normalizador de Referencias</div>
   {error_block}
   <form method="post" action="/login">
+    {user_field}
     <label for="pwd">Contraseña de acceso</label>
     <input type="password" id="pwd" name="password" autofocus placeholder="••••••••">
     <button type="submit">Entrar</button>
@@ -764,24 +885,60 @@ _LOGIN_HTML = """<!DOCTYPE html>
 </html>"""
 
 
+def _render_login(error: str = "", show_user_field: bool = False) -> str:
+    user_field = """
+    <label for="usr">Usuario</label>
+    <input type="text" id="usr" name="username" autocomplete="username" placeholder="usuario">
+    """ if show_user_field else '<input type="hidden" name="username" value="">'
+    html = _LOGIN_HTML.replace("{error_block}", error).replace("{user_field}", user_field)
+    return html
+
+
 @app.get("/login", response_class=HTMLResponse, include_in_schema=False)
-async def login_page(error: str = ""):
-    err = '<div class="error">Contraseña incorrecta.</div>' if error else ""
-    return HTMLResponse(_LOGIN_HTML.replace("{error_block}", err))
+async def login_page():
+    show_users = len(_USERS) > 1
+    return HTMLResponse(_render_login(show_user_field=show_users))
 
 
 @app.post("/login", response_class=HTMLResponse, include_in_schema=False)
-async def login_submit(password: str = Form(...)):
-    if APP_PASSWORD and not hmac.compare_digest(password, APP_PASSWORD):
-        err = '<div class="error">Contraseña incorrecta.</div>'
-        return HTMLResponse(_LOGIN_HTML.replace("{error_block}", err), status_code=401)
+async def login_submit(request: Request, password: str = Form(...), username: str = Form("")):
+    ip = _get_client_ip(request)
+    show_users = len(_USERS) > 1
+
+    # Comprobar rate limit
+    if _is_rate_limited(ip):
+        err = '<div class="error">Demasiados intentos fallidos. Espera 15 minutos e inténtalo de nuevo.</div>'
+        return HTMLResponse(_render_login(err, show_users), status_code=429)
+
+    # Verificar credenciales
+    matched_user: str | None = None
+    if _USERS:
+        for uname, upass in _USERS.items():
+            # Si se indicó usuario, sólo comprobamos ese; si no, probamos todos
+            if username and username != uname:
+                continue
+            try:
+                if hmac.compare_digest(password, upass):
+                    matched_user = uname
+                    break
+            except Exception:
+                pass
+
+    if matched_user is None:
+        _record_failed_login(ip)
+        err = '<div class="error">Credenciales incorrectas.</div>'
+        return HTMLResponse(_render_login(err, show_users), status_code=401)
+
+    _clear_login_attempts(ip)
     response = RedirectResponse(url="/", status_code=302)
     response.set_cookie(
-        key=_COOKIE,
-        value=_make_token(),
-        httponly=True,
-        samesite="lax",
-        max_age=60 * 60 * 24 * 30,   # 30 días
+        key=_COOKIE, value=_make_token(matched_user),
+        httponly=True, samesite="lax", max_age=60 * 60 * 24 * 30,
+    )
+    # Cookie de usuario (no sensible, sólo para display)
+    response.set_cookie(
+        key=_USER_COOKIE, value=matched_user,
+        httponly=False, samesite="lax", max_age=60 * 60 * 24 * 30,
     )
     return response
 
@@ -790,6 +947,7 @@ async def login_submit(password: str = Form(...)):
 async def logout():
     response = RedirectResponse(url="/login", status_code=302)
     response.delete_cookie(_COOKIE)
+    response.delete_cookie(_USER_COOKIE)
     return response
 
 

@@ -171,7 +171,106 @@ class Database:
         except Exception as e:
             logger.debug(f"log_batch_pro error: {e}")
 
-    # ── Stats ────────────────────────────────────────────────────────────
+    # ── Feedback ─────────────────────────────────────────────────────────────
+
+    def log_feedback(self, description: str, ref: Optional[str], thumbs_up: bool, source: str = ""):
+        """Registra el feedback del usuario (👍/👎) sobre un resultado."""
+        cur = self._cursor()
+        if not cur:
+            return
+        try:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS feedback_log (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    description VARCHAR(2000),
+                    ref_found VARCHAR(100),
+                    thumbs_up TINYINT(1),
+                    source VARCHAR(50),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                ) DEFAULT CHARSET=utf8mb4
+            """)
+            cur.execute("""
+                INSERT INTO feedback_log (description, ref_found, thumbs_up, source)
+                VALUES (%s, %s, %s, %s)
+            """, (description[:2000], ref[:100] if ref else None, 1 if thumbs_up else 0, source or ""))
+        except Exception as e:
+            logger.debug(f"log_feedback error: {e}")
+
+    # ── Stats detalladas ─────────────────────────────────────────────────────
+
+    def get_detailed_stats(self) -> dict:
+        """Estadísticas detalladas para el dashboard."""
+        cur = self._cursor()
+        if not cur:
+            return {}
+        try:
+            result = {}
+            cur.execute("""
+                SELECT
+                    COUNT(*) as total,
+                    SUM(status = 'FOUND') as found,
+                    SUM(status = 'NOT_FOUND') as not_found,
+                    SUM(status = 'REVIEW') as review,
+                    SUM(source = 'cache') as from_cache,
+                    SUM(source = 'claude') as from_claude,
+                    SUM(source = 'catalog') as from_catalog,
+                    AVG(response_ms) as avg_ms
+                FROM query_log
+            """)
+            row = cur.fetchone()
+            result.update({
+                "total_queries": int(row["total"] or 0),
+                "found": int(row["found"] or 0),
+                "not_found": int(row["not_found"] or 0),
+                "review": int(row["review"] or 0),
+                "from_cache": int(row["from_cache"] or 0),
+                "from_claude": int(row["from_claude"] or 0),
+                "from_catalog": int(row["from_catalog"] or 0),
+                "avg_response_ms": round(float(row["avg_ms"] or 0)),
+            })
+            cur.execute("""
+                SELECT ref_found, COUNT(*) as cnt FROM query_log
+                WHERE status = 'FOUND' AND ref_found IS NOT NULL
+                GROUP BY ref_found ORDER BY cnt DESC LIMIT 10
+            """)
+            result["top_refs"] = [{"ref": r["ref_found"], "count": r["cnt"]} for r in cur.fetchall()]
+            cur.execute("""
+                SELECT DATE(created_at) as day, COUNT(*) as cnt FROM query_log
+                WHERE created_at >= DATE_SUB(NOW(), INTERVAL 14 DAY)
+                GROUP BY DATE(created_at) ORDER BY day ASC
+            """)
+            result["queries_by_day"] = [{"day": str(r["day"]), "count": r["cnt"]} for r in cur.fetchall()]
+            cur.execute("SELECT COUNT(*) as cnt FROM claude_cache WHERE status = 'FOUND'")
+            result["claude_cache_entries"] = int(cur.fetchone()["cnt"] or 0)
+            cur.execute("""
+                SELECT COUNT(*) as total_batches, COALESCE(SUM(total_rows),0) as total_rows,
+                       SUM(used_pro=1) as pro_batches, COALESCE(SUM(cost_eur_real),0) as total_cost
+                FROM batch_log
+            """)
+            br = cur.fetchone()
+            result["total_batches"] = int(br["total_batches"] or 0)
+            result["total_batch_rows"] = int(br["total_rows"] or 0)
+            result["pro_batches"] = int(br["pro_batches"] or 0)
+            result["total_cost_eur"] = round(float(br["total_cost"] or 0), 4)
+            try:
+                cur.execute("""
+                    SELECT COUNT(*) as total, SUM(thumbs_up=1) as pos, SUM(thumbs_up=0) as neg
+                    FROM feedback_log
+                """)
+                fb = cur.fetchone()
+                result["feedback_total"] = int(fb["total"] or 0)
+                result["feedback_positive"] = int(fb["pos"] or 0)
+                result["feedback_negative"] = int(fb["neg"] or 0)
+            except Exception:
+                result["feedback_total"] = 0
+                result["feedback_positive"] = 0
+                result["feedback_negative"] = 0
+            return result
+        except Exception as e:
+            logger.debug(f"get_detailed_stats error: {e}")
+            return {}
+
+    # ── Stats básicas ────────────────────────────────────────────────────────
 
     def get_stats(self) -> dict:
         """Devuelve estadísticas generales para mostrar en el status."""
