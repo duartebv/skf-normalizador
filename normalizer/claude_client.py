@@ -1,6 +1,6 @@
 import re
 import logging
-import anthropic
+import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 
@@ -49,10 +49,12 @@ V-RINGS:
 
 
 class ClaudeNormalizer:
+    """Normalizador SKF usando Google Gemini (misma interfaz que el cliente anterior)."""
+
     def __init__(self, api_key: str, examples: list[dict]):
-        self.client = anthropic.Anthropic(api_key=api_key)
+        genai.configure(api_key=api_key)
+        self.model = genai.GenerativeModel("gemini-2.0-flash")
         self.examples = examples[:40]
-        self.model = "claude-sonnet-4-6"
         self.total_input_tokens = 0
         self.total_output_tokens = 0
 
@@ -69,16 +71,13 @@ EJEMPLOS DE ENTRENAMIENTO:
 DESCRIPCIÓN A NORMALIZAR:
 {description}"""
         try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=80,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            self.total_input_tokens += response.usage.input_tokens
-            self.total_output_tokens += response.usage.output_tokens
-            return response.content[0].text.strip()
+            response = self.model.generate_content(prompt)
+            if response.usage_metadata:
+                self.total_input_tokens += response.usage_metadata.prompt_token_count or 0
+                self.total_output_tokens += response.usage_metadata.candidates_token_count or 0
+            return response.text.strip()
         except Exception as e:
-            logger.error(f"Claude API error (single): {e}")
+            logger.error(f"Gemini API error (single): {e}")
             return "UNKNOWN"
 
     def normalize_batch(
@@ -86,8 +85,7 @@ DESCRIPCIÓN A NORMALIZAR:
         descriptions: list[str],
         progress_callback=None,
     ) -> list[str]:
-        """Normaliza una lista de descripciones en batches de 10.
-        progress_callback(current, total) se llama después de cada chunk."""
+        """Normaliza una lista de descripciones en batches de 10."""
         results: list[str] = []
         total = len(descriptions)
         for i in range(0, total, 10):
@@ -110,14 +108,11 @@ INSTRUCCIÓN BATCH: Para cada descripción numerada devuelve en una línea separ
 DESCRIPCIONES A NORMALIZAR:
 {numbered}"""
         try:
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=400,
-                messages=[{"role": "user", "content": prompt}],
-            )
-            self.total_input_tokens += response.usage.input_tokens
-            self.total_output_tokens += response.usage.output_tokens
-            text = response.content[0].text.strip()
+            response = self.model.generate_content(prompt)
+            if response.usage_metadata:
+                self.total_input_tokens += response.usage_metadata.prompt_token_count or 0
+                self.total_output_tokens += response.usage_metadata.candidates_token_count or 0
+            text = response.text.strip()
             parsed = ["UNKNOWN"] * len(descriptions)
             for line in text.splitlines():
                 m = re.match(r"^(\d+)\.\s*(.+)$", line.strip())
@@ -127,10 +122,9 @@ DESCRIPCIONES A NORMALIZAR:
                         parsed[idx] = m.group(2).strip()
             return parsed
         except Exception as e:
-            logger.error(f"Claude API error (batch): {e}")
+            logger.error(f"Gemini API error (batch): {e}")
             return ["UNKNOWN"] * len(descriptions)
 
     def real_cost_eur(self) -> float:
-        """Coste real acumulado en EUR basado en tokens consumidos."""
-        cost_usd = (self.total_input_tokens * 3 + self.total_output_tokens * 15) / 1_000_000
-        return round(cost_usd * 0.92, 4)
+        """Gemini es gratuito en el free tier."""
+        return 0.0

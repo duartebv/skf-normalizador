@@ -39,7 +39,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(__file__).parent
 DATA_DIR = Path(os.getenv("DATA_DIR", str(BASE_DIR / "data")))
-API_KEY  = os.getenv("ANTHROPIC_API_KEY", "")
+API_KEY  = os.getenv("GEMINI_API_KEY", "")
 DB_HOST  = os.getenv("DB_HOST", "")
 DB_USER  = os.getenv("DB_USER", "")
 DB_PASS  = os.getenv("DB_PASS", "")
@@ -160,9 +160,9 @@ async def lifespan(app: FastAPI):
     if API_KEY and cache:
         examples = cache.get_examples(40)
         claude = ClaudeNormalizer(API_KEY, examples)
-        logger.info("Claude API configurado correctamente")
+        logger.info("Gemini API configurado correctamente")
     else:
-        logger.warning("ANTHROPIC_API_KEY no configurada — sólo se usará la caché")
+        logger.warning("GEMINI_API_KEY no configurada — sólo se usará la caché")
 
     # Inicializar base de datos (falla silenciosamente si no está configurada)
     if DB_HOST and DB_USER and DB_PASS and DB_NAME:
@@ -675,7 +675,7 @@ async def normalize_batch_pro_start(token: str) -> JSONResponse:
     if not entry:
         raise HTTPException(404, "Token no encontrado")
     if not claude:
-        raise HTTPException(400, "Claude API no configurada. Añade ANTHROPIC_API_KEY al archivo .env")
+        raise HTTPException(400, "Gemini API no configurada. Añade GEMINI_API_KEY al archivo .env")
 
     # Avoid double-start
     existing = _progress_store.get(token, {})
