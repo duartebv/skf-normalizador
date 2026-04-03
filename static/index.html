@@ -589,7 +589,7 @@
   <div class="panel" id="panelBatch">
     <div class="card">
       <h2>Análisis Masivo</h2>
-      <p class="subtitle">Sube un Excel o CSV. Primero obtendrás los resultados gratuitos del modelo local. Después podrás mejorarlos con la Versión PRO (Claude IA).</p>
+      <p class="subtitle">Sube un Excel o CSV. Primero obtendrás los resultados gratuitos del modelo local. Después podrás mejorarlos con la Versión PRO (Gemini IA).</p>
 
       <!-- Drag & drop -->
       <div class="drop-zone" id="dropZone"
@@ -672,7 +672,7 @@
       <div class="pro-card" id="proCard">
         <div class="pro-card-header">
           <span style="font-size:1.2rem;">🤖</span>
-          <span style="font-weight:700;font-size:1rem;">Versión PRO — Mejorar con Claude IA</span>
+          <span style="font-weight:700;font-size:1rem;">Versión PRO — Mejorar con Gemini IA</span>
           <span class="pro-badge">PRO</span>
         </div>
         <div class="pro-card-body">
@@ -703,7 +703,7 @@
       <!-- Progress PRO -->
       <div class="progress-wrap" id="progressPro" style="margin-top:1rem;">
         <div class="progress-label">
-          <span id="progressProLabel" style="display:flex;align-items:center;gap:.5rem;">Procesando con Claude IA…</span>
+          <span id="progressProLabel" style="display:flex;align-items:center;gap:.5rem;">Procesando con Gemini IA…</span>
           <span id="progressProPct"></span>
         </div>
         <div class="progress-bar-outer">
@@ -806,7 +806,7 @@
       <h3>Activar Versión PRO</h3>
     </div>
     <div class="modal-body">
-      <p>La Versión PRO enviará las referencias no identificadas a <strong>Claude IA</strong> para su normalización con conocimiento experto en denominaciones SKF.</p>
+      <p>La Versión PRO enviará las referencias no identificadas a <strong>Gemini IA</strong> para su normalización con conocimiento experto en denominaciones SKF.</p>
       <div class="modal-cost-box">
         <div class="big" id="modalCostMain">—</div>
         <div class="small" id="modalCostSub">—</div>
@@ -873,7 +873,7 @@
       pillCache.textContent = d.cache_loaded ? `Modelo: ${d.cache_entries.toLocaleString()} refs` : 'Modelo: no cargado';
       pillCache.className   = 'pill ' + (d.cache_loaded ? 'ok' : 'err');
       _claudeAvailable = d.claude_available;
-      pillClaude.textContent = d.claude_available ? 'Claude: activo' : 'Claude: sin API key';
+      pillClaude.textContent = d.claude_available ? 'Gemini: activo' : 'Gemini: sin API key';
       pillClaude.className   = 'pill ' + (d.claude_available ? 'ok' : 'warn');
     } catch { document.getElementById('pillCache').className = 'pill err'; }
   }
@@ -921,7 +921,7 @@
     }
     const confEl = document.getElementById('resConf');
     confEl.textContent = d.confidence; confEl.className = 'conf-' + d.confidence;
-    const srcMap = { cache: '📚 Modelo local', claude: '🤖 Claude IA', catalog: '📋 Catálogo directo', none: '—' };
+    const srcMap = { cache: '📚 Modelo local', claude: '🤖 Gemini IA', catalog: '📋 Catálogo directo', none: '—' };
     document.getElementById('resSource').textContent = srcMap[d.source] || d.source;
     if (d.notes) { document.getElementById('resNotes').textContent = d.notes; show('resNotesWrap'); }
     else { hide('resNotesWrap'); }
@@ -1168,7 +1168,7 @@
       document.getElementById('freeResBar').style.display = 'flex';
 
       document.getElementById('proCardDesc').textContent =
-        `${pending} referencias pendientes podrían identificarse con Claude IA.`;
+        `${pending} referencias pendientes podrían identificarse con Gemini IA.`;
 
       if (d.cost_eur === 0 || d.unique_api_calls === 0) {
         document.getElementById('costMain').textContent = '€0.00';
@@ -1190,7 +1190,7 @@
 
       if (!d.claude_available) {
         document.getElementById('proBtn').disabled = true;
-        document.getElementById('proBtn').textContent = '⚠ Configura ANTHROPIC_API_KEY para activar PRO';
+        document.getElementById('proBtn').textContent = '⚠ Configura GEMINI_API_KEY para activar PRO';
       }
     } catch { hide('proCard'); }
   }
@@ -1204,7 +1204,7 @@
     hide('proCard');
     document.getElementById('progressProBar').style.width = '0%';
     document.getElementById('progressProPct').textContent = '';
-    document.getElementById('progressProLabel').innerHTML = bearingSVG(18, 'var(--purple)', 'var(--purple)') + '<span>Procesando con Claude IA…</span>';
+    document.getElementById('progressProLabel').innerHTML = bearingSVG(18, 'var(--purple)', 'var(--purple)') + '<span>Procesando con Gemini IA…</span>';
     show('progressPro');
     try {
       await apiFetch(`/api/normalize/batch/pro/${_batchToken}`, { method: 'POST' });
@@ -1239,7 +1239,7 @@
     document.getElementById('rerunSection').style.display = 'block';
     renderDonut('donutPro', 'legendPro', d.found, d.review, d.not_found);
     document.getElementById('improvementBadge').textContent =
-      `🤖 Claude mejoró ${d.improved} referencias adicionales`;
+      `🤖 Gemini mejoró ${d.improved} referencias adicionales`;
     if (d.cost_eur > 0) {
       const realCost = document.getElementById('realCostBadge');
       realCost.textContent = `💶 Coste real: €${d.cost_eur.toFixed(4)}`;
@@ -1383,7 +1383,7 @@
       </div>
       <div class="stat-card highlight-purple">
         <div class="stat-number">${(d.claude_cache_entries||0).toLocaleString()}</div>
-        <div class="stat-label">Caché Claude</div>
+        <div class="stat-label">Caché Gemini</div>
         <div class="stat-sub">${(d.session_cache_entries||0)} en sesión</div>
       </div>
       <div class="stat-card highlight-teal">
@@ -1398,7 +1398,7 @@
       </div>
       <div class="stat-card">
         <div class="stat-number" style="color:var(--orange);">€${(d.total_cost_eur||0).toFixed(3)}</div>
-        <div class="stat-label">Gasto Claude API</div>
+        <div class="stat-label">Gasto Gemini API</div>
         <div class="stat-sub">${(d.pro_batches||0)} análisis PRO</div>
       </div>
     `;
@@ -1435,7 +1435,7 @@
     const maxSrc = Math.max(fromCache, fromClaude, fromCatalog, 1);
     document.getElementById('statsSourceBars').innerHTML = [
       { label: '📚 Modelo', val: fromCache,   color: 'var(--blue)' },
-      { label: '🤖 Claude', val: fromClaude,  color: 'var(--purple)' },
+      { label: '🤖 Gemini', val: fromClaude,  color: 'var(--purple)' },
       { label: '📋 Catálogo', val: fromCatalog, color: 'var(--teal)' },
     ].map(s => `
       <div class="source-row">
