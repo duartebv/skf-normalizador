@@ -4,56 +4,55 @@ import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 
-SYSTEM_PROMPT = """Eres un experto en rodamientos SKF. Tu tarea es normalizar descripciones libres de productos a referencias de catálogo SKF.
+# ---------------------------------------------------------------------------
+# Prompt del sistema
+# ---------------------------------------------------------------------------
+SYSTEM_PROMPT = """Eres un experto en referencias SKF. Tu tarea: extraer y normalizar la referencia SKF de catálogo a partir de una descripción libre.
 
-Las descripciones pueden venir en cualquier idioma: español, inglés, francés, alemán, portugués, italiano u otros.
-Palabras equivalentes a ignorar según idioma:
-- ES: RODAMIENTO, RETEN, ANILLO, GUARDAPOLVOS
-- EN: BEARING, SEAL, RING, OIL SEAL, BALL BEARING, ROLLER BEARING
-- FR: ROULEMENT, JOINT, BAGUE
-- DE: LAGER, WELLENDICHTRING, DICHTRING
-- PT: ROLAMENTO, RETENTOR
-- IT: CUSCINETTO, PARAOLIO
+## FORMATO DEL CATÁLOGO SKF
+- Guión para protecciones: `6205-2RSH`, `6205-2Z`, `6205-RSH`, `6205-Z`
+- Barra para holgura/ranura: `6205-2RSH/C3`, `22322 E/C3`, `24026 CC/W33`, `22322 EK/W33/C3`
+- Espacio entre base y sufijo de serie: `22322 E`, `22322 EK`, `NU 206 ECP`
+- Manguitos y casquillos: `AH 3240`, `H 3140`, `AN 20` (espacio entre prefijo y número)
+- Plummer blocks: `SY 40 TF`, `SNL 510`
 
-REGLAS GENERALES:
-1. Devuelve ÚNICAMENTE la referencia SKF normalizada, sin texto adicional
-2. Si no puedes determinar la referencia con seguridad, devuelve "UNKNOWN"
-3. Nunca inventes referencias que no sean estándar SKF
-4. Si la descripción ya ES una referencia SKF válida (sin prefijos de tipo), devuélvela normalizada directamente
+## CONVERSIONES OBLIGATORIAS
+| Entrada | Salida |
+|---------|--------|
+| E1 (notación FAG) | E |
+| ZZ, 2ZR | -2Z |
+| 2RS, 2RS1, 2RSH, 2RSL | -2RSH |
+| RS, RS1, RSL | -RSH |
+| RZ | -RZ |
+| C3 / C4 / C5 separado | /C3 / /C4 / /C5 |
+| W33 separado | /W33 |
 
-REGLAS DE NORMALIZACIÓN:
+## PALABRAS A IGNORAR (en cualquier idioma)
+- Tipo: RODAMIENTO, BEARING, ROULEMENT, LAGER, ROLAMENTO, CUSCINETTO, COJINETE, MANGUITO
+- Marcas: FAG, INA, NSK, TIMKEN, NTN, KOYO, NACHI, SNR, TORRINGTON
+- Contexto: PARA REDUCTOR/MOTOR/BOMBA, REF., No., P/N, DIN, ISO, marca, modelo
+- Calidades: VITON, NBR, similar, equivalente
 
-RODAMIENTOS:
-- Elimina palabras clave en cualquier idioma (ver lista arriba)
-- Elimina marcas de otros fabricantes: FAG, SNR, INA, NSK, TIMKEN, NTN, KOYO, NACHI
-- Une dígitos separados por espacios que forman una referencia: "22 207" → "22207"
-- Sufijos de tipo: CC/CCK/C/CK/K → E/EK según corresponda a la serie
-- C3, C4 → /C3, /C4 (holgura radial)
-- W33 → ranura de lubricación, conservar si aparece en catálogo
-- 2RS, 2RSH, ZZ, 2Z → protecciones, conservar normalizadas
-- ETN9, EKTN9 → jaula de poliamida, conservar
-- J2, J2/Q → rodillos cónicos series 300/320/330, conservar
-
-RETENES (oil seals):
-- Formato de salida: DxdxA TIPO MATERIAL
-  Ejemplos: 20X40X7 HMSA10 RG | 120X150X12 HMSA10 V
-- Separadores dimensiones: "-", " x ", "x", " X " → "X" mayúscula
-- Material NBR (por defecto): HMSA10 RG
-- Material Viton (si menciona VITON/V/FPM/FKM): HMSA10 V
-- Labio simple: HMS5 RG cuando la descripción lo indique
-
-V-RINGS:
-- Formato: DDD VA/VS R
-  VA = tipo A (guardapolvo), VS = tipo S
-  Ejemplo: 100 VS R"""
+## REGLAS
+1. Devuelve ÚNICAMENTE la referencia SKF normalizada, sin texto adicional.
+2. Si hay un "Candidato extraído" proporcionado, verifícalo y corrígelo si es necesario.
+3. Si no puedes determinar la referencia con seguridad → devuelve exactamente: UNKNOWN
+4. No inventes referencias que no sigan el estándar SKF."""
 
 
 class ClaudeNormalizer:
-    """Normalizador SKF usando Google Gemini (misma interfaz que el cliente anterior)."""
+    """Normalizador SKF usando Google Gemini (free tier)."""
 
     def __init__(self, api_key: str, examples: list[dict]):
         genai.configure(api_key=api_key)
-        self.model = genai.GenerativeModel("gemini-2.0-flash")
+        self._gen_config = genai.types.GenerationConfig(
+            temperature=0.0,          # determinista: misma entrada → misma salida
+            max_output_tokens=64,     # referencias son cortas; ahorra quota
+        )
+        self.model = genai.GenerativeModel(
+            "gemini-2.0-flash",
+            generation_config=self._gen_config,
+        )
         self.examples = examples[:40]
         self.total_input_tokens = 0
         self.total_output_tokens = 0
@@ -61,15 +60,33 @@ class ClaudeNormalizer:
     def _examples_text(self) -> str:
         return "\n".join(f'  "{e["desc"]}" → "{e["ref"]}"' for e in self.examples)
 
-    def normalize_single(self, description: str) -> str:
-        """Normaliza una sola descripción. Devuelve la referencia o 'UNKNOWN'."""
+    def normalize_single(
+        self,
+        description: str,
+        cleaned: str = "",
+        candidate: str = "",
+    ) -> str:
+        """
+        Normaliza una descripción.
+        - cleaned: versión ya limpiada por clean_description()
+        - candidate: mejor candidato extraído por normalize_ref_candidate()
+        Devuelve la referencia o 'UNKNOWN'.
+        """
+        context = f"Descripción original: {description}"
+        if cleaned and cleaned.upper() != description.upper():
+            context += f"\nTexto limpiado (sin ruido): {cleaned}"
+        if candidate and candidate not in ("", "UNKNOWN"):
+            context += f"\nCandidato extraído (verificar/corregir formato): {candidate}"
+
         prompt = f"""{SYSTEM_PROMPT}
 
-EJEMPLOS DE ENTRENAMIENTO:
+EJEMPLOS DEL MODELO:
 {self._examples_text()}
 
-DESCRIPCIÓN A NORMALIZAR:
-{description}"""
+---
+{context}
+
+Referencia SKF:"""
         try:
             response = self.model.generate_content(prompt)
             if response.usage_metadata:
@@ -83,29 +100,55 @@ DESCRIPCIÓN A NORMALIZAR:
     def normalize_batch(
         self,
         descriptions: list[str],
+        cleaned_list: list[str] | None = None,
+        candidate_list: list[str] | None = None,
         progress_callback=None,
     ) -> list[str]:
-        """Normaliza una lista de descripciones en batches de 10."""
+        """
+        Normaliza una lista de descripciones en batches de 10.
+        - cleaned_list: versiones limpias correspondientes (misma longitud)
+        - candidate_list: candidatos extraídos (misma longitud)
+        """
         results: list[str] = []
         total = len(descriptions)
         for i in range(0, total, 10):
-            chunk = descriptions[i : i + 10]
-            results.extend(self._normalize_chunk(chunk))
+            chunk_descs = descriptions[i: i + 10]
+            chunk_clean = (cleaned_list[i: i + 10] if cleaned_list else None)
+            chunk_cands = (candidate_list[i: i + 10] if candidate_list else None)
+            results.extend(self._normalize_chunk(chunk_descs, chunk_clean, chunk_cands))
             if progress_callback:
                 progress_callback(min(i + 10, total), total)
         return results
 
-    def _normalize_chunk(self, descriptions: list[str]) -> list[str]:
+    def _normalize_chunk(
+        self,
+        descriptions: list[str],
+        cleaned_list: list[str] | None = None,
+        candidate_list: list[str] | None = None,
+    ) -> list[str]:
         """Procesa hasta 10 descripciones en una sola llamada."""
-        numbered = "\n".join(f"{j + 1}. {d}" for j, d in enumerate(descriptions))
+        lines = []
+        for j, desc in enumerate(descriptions):
+            line = f"{j + 1}. {desc}"
+            clean = (cleaned_list[j] if cleaned_list and j < len(cleaned_list) else "") or ""
+            cand = (candidate_list[j] if candidate_list and j < len(candidate_list) else "") or ""
+            if clean and clean.upper() != desc.upper():
+                line += f"  [limpiado: {clean}]"
+            if cand and cand not in ("", "UNKNOWN"):
+                line += f"  [candidato: {cand}]"
+            lines.append(line)
+
+        numbered = "\n".join(lines)
         prompt = f"""{SYSTEM_PROMPT}
 
-EJEMPLOS DE ENTRENAMIENTO:
+EJEMPLOS DEL MODELO:
 {self._examples_text()}
 
-INSTRUCCIÓN BATCH: Para cada descripción numerada devuelve en una línea separada el número, un punto y la referencia normalizada. Ejemplo: "1. 6205 2RS1"
+INSTRUCCIÓN BATCH: Para cada línea numerada devuelve exactamente una línea con el número, punto y referencia SKF normalizada.
+Formato esperado: "1. 6205-2RSH/C3"
+Si no puedes determinar una referencia → "N. UNKNOWN"
 
-DESCRIPCIONES A NORMALIZAR:
+DESCRIPCIONES:
 {numbered}"""
         try:
             response = self.model.generate_content(prompt)
@@ -115,7 +158,9 @@ DESCRIPCIONES A NORMALIZAR:
             text = response.text.strip()
             parsed = ["UNKNOWN"] * len(descriptions)
             for line in text.splitlines():
-                m = re.match(r"^(\d+)\.\s*(.+)$", line.strip())
+                line = line.strip()
+                # Acepta: "1. REF", "1) REF", "1 REF"
+                m = re.match(r'^(\d+)[.)]\s*(.+)$', line)
                 if m:
                     idx = int(m.group(1)) - 1
                     if 0 <= idx < len(descriptions):
@@ -126,5 +171,5 @@ DESCRIPCIONES A NORMALIZAR:
             return ["UNKNOWN"] * len(descriptions)
 
     def real_cost_eur(self) -> float:
-        """Gemini es gratuito en el free tier."""
+        """Gemini free tier: sin coste."""
         return 0.0

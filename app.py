@@ -234,14 +234,15 @@ def _process_one(description: str, use_claude: bool = True, log_to_db: bool = Fa
 
     result = None
 
-    # --- 0. Lookup directo en catálogo ---
+    # --- 0. Lookup directo en catálogo (umbral ≥95 para tolerar pequeñas variaciones) ---
     if catalog:
         for candidate in ([desc_norm, desc_clean] if desc_norm != desc_clean else [desc_clean]):
             if not candidate:
                 continue
             found_direct, matched_direct, score_direct = catalog.validate(candidate)
-            if found_direct and score_direct == 100:
-                result = {"ref": matched_direct, "status": "FOUND", "confidence": "HIGH",
+            if found_direct and score_direct >= 95:
+                confidence = "HIGH" if score_direct == 100 else "MEDIUM"
+                result = {"ref": matched_direct, "status": "FOUND", "confidence": confidence,
                           "notes": "Referencia directa en catálogo", "source": "catalog"}
                 break
 
@@ -253,6 +254,7 @@ def _process_one(description: str, use_claude: bool = True, log_to_db: bool = Fa
             ref_cache, score_cache, method_cache = None, 0.0, "none"
 
         if method_cache == "exact" or (method_cache == "fuzzy" and score_cache >= 90):
+            # Alta confianza en cache → validar en catálogo
             if catalog:
                 found, matched, _cat_score = catalog.validate(ref_cache)
             else:
@@ -265,9 +267,27 @@ def _process_one(description: str, use_claude: bool = True, log_to_db: bool = Fa
                 notes += " (no validado en catálogo)"
             result = {"ref": matched or ref_cache, "status": status, "confidence": confidence, "notes": notes, "source": "cache"}
 
-        # --- 2. Claude API ---
-        elif use_claude and claude:
-            ref_claude = claude.normalize_single(desc)
+        elif method_cache == "fuzzy" and score_cache >= 75:
+            # Confianza media en cache: intentar validar en catálogo antes de ir a Gemini
+            if catalog:
+                found, matched, cat_score = catalog.validate(ref_cache)
+            else:
+                found, matched, cat_score = True, ref_cache, 100.0
+
+            if found:
+                # Cache + catálogo confirman → MEDIUM confidence, evitamos llamada a Gemini
+                result = {
+                    "ref": matched or ref_cache,
+                    "status": "FOUND",
+                    "confidence": "MEDIUM",
+                    "notes": f"Cache {score_cache:.0f}% validado en catálogo",
+                    "source": "cache",
+                }
+            # Si no valida en catálogo, caemos a Gemini (result sigue None)
+
+        # --- 2. Gemini API ---
+        if result is None and use_claude and claude:
+            ref_claude = claude.normalize_single(desc, cleaned=desc_clean, candidate=desc_norm)
 
             if ref_claude and ref_claude.upper() not in ("UNKNOWN", "NAN", ""):
                 if catalog:
@@ -277,7 +297,7 @@ def _process_one(description: str, use_claude: bool = True, log_to_db: bool = Fa
 
                 if found:
                     confidence = "HIGH" if cat_score == 100 else "MEDIUM"
-                    notes = "API Claude" if cat_score == 100 else f"API Claude + catálogo fuzzy {cat_score:.0f}%"
+                    notes = "Gemini IA" if cat_score == 100 else f"Gemini IA + catálogo fuzzy {cat_score:.0f}%"
                     result = {"ref": matched_ref or ref_claude, "status": "FOUND", "confidence": confidence, "notes": notes, "source": "claude"}
                 else:
                     if ref_cache and score_cache >= 75:
@@ -285,7 +305,7 @@ def _process_one(description: str, use_claude: bool = True, log_to_db: bool = Fa
                             "ref": ref_cache,
                             "status": "REVIEW",
                             "confidence": "LOW",
-                            "notes": f"Claude sugirió {ref_claude} (no en catálogo). Cache sugiere {ref_cache} ({score_cache:.0f}%)",
+                            "notes": f"Gemini sugirió {ref_claude} (no en catálogo). Cache sugiere {ref_cache} ({score_cache:.0f}%)",
                             "source": "claude",
                         }
                     else:
@@ -293,7 +313,7 @@ def _process_one(description: str, use_claude: bool = True, log_to_db: bool = Fa
                             "ref": ref_claude,
                             "status": "NOT_FOUND",
                             "confidence": "LOW",
-                            "notes": f"Claude sugirió {ref_claude} pero no existe en catálogo",
+                            "notes": f"Gemini sugirió {ref_claude} pero no existe en catálogo",
                             "source": "claude",
                         }
 
@@ -430,19 +450,64 @@ def _run_pro_sync(token: str):
         }
         return
 
-    # Deduplicate: only send unique descriptions to Claude
+    # ── Paso previo: re-ejecutar pipeline básico con reglas mejoradas ──────────
+    # Algunos NOT_FOUND del análisis básico pueden resolverse ahora sin Gemini
+    pre_improved = 0
+    still_pending = []
+    for idx in indices:
+        desc = descriptions[idx]
+        new_result = _process_one(desc, use_claude=False)
+        if new_result["status"] == "FOUND":
+            results[idx] = new_result
+            pre_improved += 1
+        else:
+            still_pending.append(idx)
+
+    indices = still_pending
+    total_pending = len(indices)
+    _progress_store[token]["total"] = total_pending
+    logger.info(f"PRO pre-pass: {pre_improved} mejorados por reglas, {total_pending} pendientes para Gemini")
+
+    if total_pending == 0:
+        df = _read_file(entry["file_content"], entry["original_filename"])
+        entry["results_pro"] = results
+        entry["excel_pro"] = _build_output_excel(df, results)
+        entry["csv_pro"] = _build_output_csv(df, results)
+        counts = _count_statuses(results)
+        _progress_store[token] = {
+            "status": "done",
+            "found": counts["FOUND"], "not_found": counts["NOT_FOUND"], "review": counts["REVIEW"],
+            "improved": pre_improved, "cost_eur": 0.0, "total": len(results),
+        }
+        return
+
+    # Deduplicate: only send unique descriptions to Gemini
     unique_descs = list(dict.fromkeys(descriptions[i] for i in indices))
 
+    # Construir listas de contexto (cleaned + candidate) para cada descripción única
+    unique_cleaned = [clean_description(d) for d in unique_descs]
+    unique_candidates = [normalize_ref_candidate(c) for c in unique_cleaned]
+
     # Filter out session-cached results
-    to_request = [d for d in unique_descs if clean_description(d) not in _claude_session_cache]
+    uncached_descs, uncached_clean, uncached_cands = [], [], []
+    for d, c, cand in zip(unique_descs, unique_cleaned, unique_candidates):
+        if c not in _claude_session_cache:
+            uncached_descs.append(d)
+            uncached_clean.append(c)
+            uncached_cands.append(cand)
 
     def _progress_cb(current, total_chunks):
         pct_done = current / max(total_chunks, 1)
         _progress_store[token]["current"] = int(pct_done * total_pending)
 
-    if to_request:
-        claude_refs = claude.normalize_batch(to_request, progress_callback=_progress_cb)
-        for desc, ref in zip(to_request, claude_refs):
+    if uncached_descs:
+        claude_refs = claude.normalize_batch(
+            uncached_descs,
+            cleaned_list=uncached_clean,
+            candidate_list=uncached_cands,
+            progress_callback=_progress_cb,
+        )
+        for desc, ref in zip(uncached_descs, claude_refs):
             clean_key = clean_description(desc)
             _claude_session_cache[clean_key] = ref
             # Persist to DB cache
@@ -450,7 +515,7 @@ def _run_pro_sync(token: str):
                 status_for_cache = "FOUND" if ref and ref.upper() not in ("UNKNOWN", "NAN", "") else "NOT_FOUND"
                 db.save_claude_cache(clean_key, ref if status_for_cache == "FOUND" else None, status_for_cache)
 
-    improved = 0
+    improved = pre_improved
     for original_idx in indices:
         desc = descriptions[original_idx]
         ref_claude = _claude_session_cache.get(clean_description(desc), "UNKNOWN")
@@ -464,12 +529,12 @@ def _run_pro_sync(token: str):
 
         if found:
             confidence = "HIGH" if cat_score == 100 else "MEDIUM"
-            notes = "Claude API (Versión PRO)" if cat_score == 100 else f"Claude API + catálogo fuzzy {cat_score:.0f}%"
+            notes = "Gemini IA (PRO)" if cat_score == 100 else f"Gemini IA + catálogo fuzzy {cat_score:.0f}%"
             results[original_idx] = {"ref": matched_ref or ref_claude, "status": "FOUND",
                                      "confidence": confidence, "notes": notes, "source": "claude"}
             improved += 1
         else:
-            results[original_idx]["notes"] += f" | Claude sugirió: {ref_claude} (no en catálogo)"
+            results[original_idx]["notes"] += f" | Gemini sugirió: {ref_claude} (no en catálogo)"
 
     df = _read_file(entry["file_content"], entry["original_filename"])
     entry["results_pro"] = results
