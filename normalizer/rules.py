@@ -158,8 +158,9 @@ def normalize_ref_candidate(text: str) -> str:
 
     t = text.upper().strip()
 
-    # 0. FAG → SKF: E1 → E (jaula reforzada)
-    t = re.sub(r'\bE1\b', 'E', t)
+    # 0. FAG → SKF: notaciones de jaula
+    t = re.sub(r'\bE1\b', 'E', t)           # E1 (FAG reforzada) → E
+    t = re.sub(r'\bEM1?\b', 'ECM', t)       # EM/EM1 (FAG jaula latón CRB) → ECM (SKF)
 
     # 1. Normalizar sufijos ADHERIDOS (sin espacio entre número y sufijo)
     #    Ej: "6205RS" → "6205-RSH", "6205ZZ" → "6205-2Z"
@@ -180,9 +181,10 @@ def normalize_ref_candidate(text: str) -> str:
     t = re.sub(r'[\s\-]+(ZZ|2ZR?)\b', r'-2Z', t)
 
     # 5. Normalizar escudo simple Z → -Z
-    t = re.sub(r'[\s\-]+1Z\b', r'-Z', t)   # 1Z explícito
-    # "6205 Z" → "6205-Z" solo cuando Z no está ya precedido de 2 (2Z ya gestionado)
-    t = re.sub(r'(?<!\d)(?<![-/])[\s\-]+Z\b', r'-Z', t)
+    t = re.sub(r'[\s\-]+1Z\b', r'-Z', t)           # 1Z explícito → -Z
+    # "6205 Z" → "6205-Z"  (espacio antes de Z suelto, tras carácter alfanumérico)
+    # Usa lookbehind positivo en lugar de negativo para evitar el bug anterior
+    t = re.sub(r'(?<=[A-Z0-9])\s+Z\b', r'-Z', t)
 
     # 6. Normalizar RZ / 2RZ → -RZ / -2RZ
     t = re.sub(r'[\s\-]+(2RZ)\b', r'-2RZ', t)
