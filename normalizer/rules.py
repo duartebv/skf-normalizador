@@ -2,12 +2,25 @@ import re
 
 # Palabras a eliminar completamente (multilingüe)
 STOP_WORDS = {
-    # Español
+    # Español — tipos de componentes
     'RODAMIENTO', 'RODAMINTO', 'RODAMIENTOS', 'RETEN', 'RETÉN', 'RETENTOR',
     'ANILLO', 'GUARDAPOLVOS', 'CORREA', 'DENTADA', 'JUNTA', 'SELLO',
     'OSCILANTE', 'BOLAS', 'RODILLOS', 'CILÍNDRICO', 'CILINDRICO',
-    'ESFÉRICO', 'ESFERICO', 'AGUJA', 'AXIAL', 'RADIAL', 'CÓNICO', 'CONICO',
+    'CILÍNDRICOS', 'CILINDRICOS',
+    'ESFÉRICO', 'ESFERICO', 'ESFÉRICOS', 'ESFERICOS', 'ESFÉRICAS', 'ESFERICAS',
+    'AGUJA', 'AXIAL', 'RADIAL', 'CÓNICO', 'CONICO', 'CÓNICOS', 'CONICOS',
+    'COJINETE', 'COJINETES',           # faltaba (español estándar)
+    'MANGUITO', 'MANGUITOS',           # adaptador de montaje (AH, H series)
+    'CASQUILLO', 'CASQUILLOS',         # bushing
+    # Español — ruido contextual
     'TIPO', 'REF', 'REFª', 'RLT', 'DE', 'A', 'EN', 'CON', 'Y', 'O',
+    'MARCA', 'MODELO', 'CALIDAD',      # etiquetas de ruido
+    'REDUCTOR', 'REDUCTORES',          # contexto de maquinaria
+    'MOTOR', 'MOTORES',
+    'BOMBA', 'BOMBAS',
+    'COMPRESOR', 'COMPRESORES',
+    'VENTILADOR', 'VENTILADORES',
+    'CAJA', 'TRANSMISION', 'TRANSMISIÓN',
     # Inglés
     'BEARING', 'BEARINGS', 'BALL', 'ROLLER', 'TAPERED', 'SPHERICAL',
     'NEEDLE', 'THRUST', 'SEAL', 'SEALS', 'OIL', 'SHAFT', 'RING', 'RINGS',
@@ -24,6 +37,7 @@ STOP_WORDS = {
     # Marcas a ignorar
     'SKF', 'FAG', 'SNR', 'INA', 'NSK', 'TIMKEN', 'NTN', 'TORRINGTON',
     'UCSJ', 'SCHAEFFLER', 'KOYO', 'NACHI', 'ZKL', 'RHP', 'URB',
+    'GENERIC', 'STANDARD',
 }
 
 # Patrones a eliminar
@@ -33,7 +47,7 @@ PATTERNS_TO_REMOVE = [
     r"'[^']*'",                                            # texto entre comillas simples
     r'(?i)\b(ou?\s+fag|ou?\s+similar|ou?\s+equivalente|or\s+similar|or\s+equivalent)\b',
     r'(?i)\b(din[-\s]?\d+|iso[-\s]?\d+|uni[-\s]?\d+)\b',
-    r'(?i)\s*[-,;]\s*(para|segun|según|norma|ref[ae]?\.|pour|für|per).*$',
+    r'(?i)(?:\s*[-,;/]\s*|\s+)\b(para|segun|según|norma|ref[ae]?\.|pour|für|per)\b.*$',
     r'(?i)\b(fabricaci[oó]n\s+obligatoria|fabri\.?\s*oblig\.?)\b',
     r'(?i)\b(calidad\s+viton|calidad\s+nbr|calidad\s+similar|quality\s+\w+)\b',
     r'(?i)\b(material:\s*\w+)\b',
@@ -64,6 +78,9 @@ def clean_description(text: str) -> str:
 
     # Colapsar espacios múltiples
     text = re.sub(r'\s+', ' ', text).strip()
+
+    # Eliminar puntuación suelta al final (residuos tras eliminar paréntesis/patrones)
+    text = re.sub(r'[,;:\.]+$', '', text).strip()
 
     # Juntar dígitos separados por espacios que forman una referencia
     # Ej: "22 205" → "22205", "32 30 9" → "32309", "12 09" → "1209"
@@ -116,6 +133,9 @@ def normalize_ref_candidate(text: str) -> str:
         return text
 
     t = text.upper().strip()
+
+    # 0. Normalizar notación FAG → SKF: E1 → E (jaula reforzada)
+    t = re.sub(r'\bE1\b', 'E', t)
 
     # 1. Normalizar variantes de 2RS → -2RSH (antes de C3 para no confundir)
     t = re.sub(r'[\s\-]+(2RS1?H?|2RSH|2RSL)\b', r'-2RSH', t)
